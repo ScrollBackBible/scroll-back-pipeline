@@ -334,23 +334,22 @@ def place_cut(t_req, lo, hi, clip, pad, kind):
     s = sorted(diff[1:]) or [1.0]
     med = max(s[len(s) // 2], 0.5)
     cuts = set(clip["cuts"])
+    # The model's own shot change is the cleanest cut there is: if one falls inside the window,
+    # cut exactly on it. Cutting a few frames either side leaves a flash of the other shot.
+    on_cut = [c for c in cuts if lo_i <= c <= hi_i and not in_speech(c / fps, clip["speech"], pad)]
+    if on_cut:
+        return min(on_cut, key=lambda c: abs(c / fps - t_req)) / fps, None
     best, best_score = None, None
     window = max(hi - lo, 1e-6)
     for i in range(lo_i, hi_i + 1):
         t = i / fps
         if in_speech(t, clip["speech"], pad):
             continue
-        near_cut = any(0 < abs(i - c) <= 6 for c in cuts)
-        if near_cut:
+        if any(abs(i - c) <= 6 for c in cuts):
             continue  # would leave a flash (up to a quarter second) of the neighbouring shot
-        if i in cuts:
-            m = [diff[j] for j in (i + 1, i + 2) if 0 < j < n]   # the cut's own jump is not motion
-        else:
-            m = [diff[j] for j in (i - 1, i, i + 1) if 0 < j < n]
+        m = [diff[j] for j in (i - 1, i, i + 1) if 0 < j < n]
         motion = (sum(m) / len(m) if m else 0.0) / med
         score = motion + 0.8 * abs(t - t_req) / window
-        if i in cuts:
-            score -= 1.0  # the model's own shot change is the cleanest cut there is
         if best_score is None or score < best_score:
             best, best_score = t, score
     if best is None:
