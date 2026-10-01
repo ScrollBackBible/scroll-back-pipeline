@@ -49,8 +49,9 @@ What it does, in order:
      captions throughout, the title riding the portal flash in the top band, and
      the episode's end card after the last line.
   7. If the manifest has a "theme" block, the series theme plays under the cold
-     open of the episode, the vertical episode and the trailer: its swell lands on
-     the portal flash, it dips under speech, and it fades out just after the flash.
+     open of the episode, the vertical episode and the trailer: it starts with the
+     video, dips under speech, and fades out through the teleport, ending a second
+     or two after the portal flash.
   8. Two-pass loudness normalisation on every output (-14 LUFS, -2 dBTP).
   9. Writes a shot log (JSON + Markdown) and a contact sheet per output, so the
      result can be checked frame by frame before anything is uploaded.
@@ -765,11 +766,12 @@ def contact_sheet(video, png, cols=6, every=2.0, thumb_w=240):
 # ----------------------------------------------------------------------------
 
 THEME = {            # defaults; the manifest's "theme" block overrides any of these
-    "peak_at": None,       # seconds into the theme file where its swell begins; lands on the portal flash
+    "fade_from": -1.0,     # the fade-out starts this many seconds before the portal flash (the golden glow) ...
+    "fade_to": 1.5,        # ... and the theme is silent this many seconds after it
     "level_lu": -10.0,     # bed level against the opening's dialogue, in LU (negative = under it)
-    "tail": 2.5,           # seconds the theme keeps fading out after the flash
     "duck_ratio": 3.0,     # how hard the bed dips under speech (sidechain compression)
     "duck_threshold": 0.04,
+    "peak_at": None,       # optional: seconds into the theme file to line up with the flash, instead of starting it at 0
 }
 
 
@@ -794,9 +796,10 @@ def measure_i(path, start=0.0, dur=None):
 def mix_theme(src, man, flash_t, work, name):
     """Lay the series theme (the manifest's "theme" block) under the opening of src's audio.
 
-    The theme's swell lands on the portal flash, the bed sits level_lu under the opening's
-    dialogue and dips further whenever someone speaks, and it fades out `tail` seconds after
-    the flash. Returns (path of the mixed WAV, report dict)."""
+    The theme starts with the video, sits level_lu under the opening's dialogue and dips
+    further whenever someone speaks, then fades out through the teleport: from fade_from
+    seconds before the portal flash to fade_to seconds after it (Brian's spec, Oct 1).
+    Returns (path of the mixed WAV, report dict)."""
     spec = dict(THEME, **man["theme"])
     theme = os.path.join(work, "theme_" + hashlib.sha1(spec["url"].encode()).hexdigest()[:10]
                          + os.path.splitext(spec["url"].split("?")[0])[1])
@@ -804,7 +807,8 @@ def mix_theme(src, man, flash_t, work, name):
     peak = spec.get("peak_at")
     seek = max(0.0, peak - flash_t) if peak is not None else 0.0
     delay = max(0.0, flash_t - peak) if peak is not None else 0.0
-    end = flash_t + spec["tail"]
+    fade_st = max(0.0, flash_t + spec["fade_from"])
+    end = flash_t + spec["fade_to"]
     dlg = measure_i(src, 0.0, flash_t)
     if dlg < -50:
         dlg = -23.0
@@ -813,7 +817,7 @@ def mix_theme(src, man, flash_t, work, name):
     fmt = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
     g = [f"[1:a]{fmt},atrim=start={fnum(seek)},asetpts=PTS-STARTPTS"
          + (f",adelay={int(delay * 1000)}:all=1" if delay else "")
-         + f",volume={gain}dB,afade=t=out:st={fnum(flash_t)}:d={fnum(spec['tail'])},atrim=end={fnum(end)}[th]",
+         + f",volume={gain}dB,afade=t=out:st={fnum(fade_st)}:d={fnum(end - fade_st)},atrim=end={fnum(end)}[th]",
          f"[0:a]{fmt},asplit=2[dlg][key]",
          f"[th][key]sidechaincompress=threshold={spec['duck_threshold']}:ratio={spec['duck_ratio']}"
          f":attack=20:release=350[thd]",
@@ -821,7 +825,7 @@ def mix_theme(src, man, flash_t, work, name):
     out = os.path.join(work, f"{name}_theme.wav")
     run(["ffmpeg", "-y", "-v", "error", "-i", src, "-i", theme, "-filter_complex", ";".join(g),
          "-map", "[out]", "-c:a", "pcm_s16le", out])
-    return out, {"seek": round(seek, 2), "delay": round(delay, 2), "until": round(end, 2),
+    return out, {"seek": round(seek, 2), "delay": round(delay, 2), "fade": [round(fade_st, 2), round(end, 2)],
                  "gain_db": gain, "dialogue_lufs": round(dlg, 1)}
 
 
