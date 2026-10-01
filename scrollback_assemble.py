@@ -48,8 +48,11 @@ What it does, in order:
      TikTok and Instagram (E{n}F1V): the episode's own cuts and dissolves,
      captions throughout, the title riding the portal flash in the top band, and
      the episode's end card after the last line.
-  7. Two-pass loudness normalisation on every output (-14 LUFS, -2 dBTP).
-  8. Writes a shot log (JSON + Markdown) and a contact sheet per output, so the
+  7. If the manifest has a "theme" block, the series theme plays under the cold
+     open of the episode, the vertical episode and the trailer: its swell lands on
+     the portal flash, it dips under speech, and it fades out just after the flash.
+  8. Two-pass loudness normalisation on every output (-14 LUFS, -2 dBTP).
+  9. Writes a shot log (JSON + Markdown) and a contact sheet per output, so the
      result can be checked frame by frame before anything is uploaded.
 
 Everything is driven by the manifest. See E2.json for a worked example.
@@ -758,6 +761,71 @@ def contact_sheet(video, png, cols=6, every=2.0, thumb_w=240):
 
 
 # ----------------------------------------------------------------------------
+# Series theme under the cold open
+# ----------------------------------------------------------------------------
+
+THEME = {            # defaults; the manifest's "theme" block overrides any of these
+    "peak_at": None,       # seconds into the theme file where its swell begins; lands on the portal flash
+    "level_lu": -10.0,     # bed level against the opening's dialogue, in LU (negative = under it)
+    "tail": 2.5,           # seconds the theme keeps fading out after the flash
+    "duck_ratio": 3.0,     # how hard the bed dips under speech (sidechain compression)
+    "duck_threshold": 0.04,
+}
+
+
+def first_flash(segs, starts, clips):
+    """Output time of the first portal flash, or None."""
+    for i, s in enumerate(segs):
+        f = clips[s["clip"]].get("flash")
+        if s.get("portal") and f is not None:
+            return starts[i] + (f - s["in"])
+    return None
+
+
+def measure_i(path, start=0.0, dur=None):
+    cmd = ["ffmpeg", "-hide_banner", "-ss", fnum(max(0.0, start))]
+    if dur:
+        cmd += ["-t", fnum(dur)]
+    p = subprocess.run(cmd + ["-i", path, "-vn", "-af", "ebur128", "-f", "null", "-"], capture_output=True, text=True)
+    m = re.findall(r"I:\s+(-?[0-9.]+) LUFS", p.stderr)
+    return float(m[-1]) if m else -70.0
+
+
+def mix_theme(src, man, flash_t, work, name):
+    """Lay the series theme (the manifest's "theme" block) under the opening of src's audio.
+
+    The theme's swell lands on the portal flash, the bed sits level_lu under the opening's
+    dialogue and dips further whenever someone speaks, and it fades out `tail` seconds after
+    the flash. Returns (path of the mixed WAV, report dict)."""
+    spec = dict(THEME, **man["theme"])
+    theme = os.path.join(work, "theme_" + hashlib.sha1(spec["url"].encode()).hexdigest()[:10]
+                         + os.path.splitext(spec["url"].split("?")[0])[1])
+    fetch(spec["url"], theme)
+    peak = spec.get("peak_at")
+    seek = max(0.0, peak - flash_t) if peak is not None else 0.0
+    delay = max(0.0, flash_t - peak) if peak is not None else 0.0
+    end = flash_t + spec["tail"]
+    dlg = measure_i(src, 0.0, flash_t)
+    if dlg < -50:
+        dlg = -23.0
+    th = measure_i(theme, seek, max(1.0, end - delay))
+    gain = round(dlg + spec["level_lu"] - th, 2)
+    fmt = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+    g = [f"[1:a]{fmt},atrim=start={fnum(seek)},asetpts=PTS-STARTPTS"
+         + (f",adelay={int(delay * 1000)}:all=1" if delay else "")
+         + f",volume={gain}dB,afade=t=out:st={fnum(flash_t)}:d={fnum(spec['tail'])},atrim=end={fnum(end)}[th]",
+         f"[0:a]{fmt},asplit=2[dlg][key]",
+         f"[th][key]sidechaincompress=threshold={spec['duck_threshold']}:ratio={spec['duck_ratio']}"
+         f":attack=20:release=350[thd]",
+         "[dlg][thd]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[out]"]
+    out = os.path.join(work, f"{name}_theme.wav")
+    run(["ffmpeg", "-y", "-v", "error", "-i", src, "-i", theme, "-filter_complex", ";".join(g),
+         "-map", "[out]", "-c:a", "pcm_s16le", out])
+    return out, {"seek": round(seek, 2), "delay": round(delay, 2), "until": round(end, 2),
+                 "gain_db": gain, "dialogue_lufs": round(dlg, 1)}
+
+
+# ----------------------------------------------------------------------------
 # Captions
 # ----------------------------------------------------------------------------
 
@@ -1018,8 +1086,17 @@ def render_episode(man, cfg, clips, work, outdir, font, draft, report):
     inputs = []
     for png, _, _, _, _ in cards:
         inputs += ["-loop", "1", "-framerate", str(fps), "-t", fnum(total + 1), "-i", png]
+    amap = "0:a"
+    portal_t = first_flash(segs, starts, clips)
+    if man.get("theme") and ep.get("theme", True):
+        if portal_t is None:
+            report.setdefault("warnings", []).append(f"{name}: no portal flash found, so the theme was not added")
+        else:
+            wav, report["episode"]["theme"] = mix_theme(master, man, portal_t, work, name)
+            inputs += ["-i", wav]
+            amap = f"{1 + len(cards)}:a"
     run(["ffmpeg", "-y", "-v", "error", "-i", master] + inputs + ["-filter_complex_script", script,
-         "-map", "[v]", "-map", "0:a", "-r", str(fps), "-shortest", "-c:v", "libx264",
+         "-map", "[v]", "-map", amap, "-r", str(fps), "-shortest", "-c:v", "libx264",
          "-preset", "veryfast" if draft else "medium", "-crf", "20" if draft else "18",
          "-profile:v", "high", "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", stage])
     out = os.path.join(outdir, f"{name}.mp4")
@@ -1206,8 +1283,17 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
     ins = ["-i", base]
     for p, *_ in layers:
         ins += ["-loop", "1", "-framerate", str(fps), "-t", fnum(total + 1), "-i", p]
+    asrc = "0:a"
+    if man.get("theme") and sh.get("theme", kind in ("episode", "trailer")):
+        portal_t = first_flash(segs, starts, clips)
+        if portal_t is None:
+            report.setdefault("warnings", []).append(f"{name}: no portal flash found, so the theme was not added")
+        else:
+            wav, rep["theme"] = mix_theme(base, man, portal_t, work, name)
+            ins += ["-i", wav]
+            asrc = f"{1 + len(layers)}:a"
     g = [f"[0:v]setpts=PTS-STARTPTS" + (f",tpad=stop_mode=clone:stop_duration={hold:.3f}" if hold else "") + "[src]",
-         "[0:a]asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+         f"[{asrc}]asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
          + (f",apad=pad_dur={hold:.3f}" if hold else "") + "[aout]"]
     if mode == "letterbox":
         fgf = f"scale={sw}:{pic_h}:flags=lanczos"

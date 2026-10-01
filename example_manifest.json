@@ -172,5 +172,12 @@
     }
   ],
   "font": "Montserrat-ExtraBold.ttf",
-  "_font_note": "Montserrat ExtraBold (weight 800). A relative path is resolved against this manifest's folder, so keep the .ttf next to E2.json, or give an absolute path. Source: https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/Montserrat-ExtraBold.ttf. The script reads the family and weight from the file and refuses to render in anything else."
+  "_font_note": "Montserrat ExtraBold (weight 800). A relative path is resolved against this manifest's folder, so keep the .ttf next to E2.json, or give an absolute path. Source: https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/Montserrat-ExtraBold.ttf. The script reads the family and weight from the file and refuses to render in anything else.",
+  "theme": {
+    "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3Ih9xvYO0SSeffFtZcr48MqbHta/6f235bc6-9a4f-4d09-9cd8-da1b43cf42e1.mp3",
+    "peak_at": 20.6,
+    "level_lu": -10,
+    "tail": 2.5,
+    "_note": "Scroll Back theme v1, an original royalty-free track made with vidIQ's music tool on Oct 1 (31.7s). Its swell begins at about 20.6s, which the pipeline lands on the first portal flash."
+  }
 }
