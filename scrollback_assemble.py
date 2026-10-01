@@ -1350,7 +1350,10 @@ def main():
     if man.get("episode_cut") and (not only or ep_name in only):
         need |= set(man["episode_cut"]["clips"])
     for s in wanted_shorts:
-        need |= {g["clip"] for g in s["segments"]}
+        if s.get("kind") == "episode":
+            need |= set((man.get("episode_cut") or {}).get("clips", []))
+        else:
+            need |= {g["clip"] for g in s["segments"]}
     if args.check:  # every take that has a url, whether or not an output uses it yet
         need = {c["id"] for c in man["clips"] if c.get("url") and not c["url"].startswith("TODO")}
         if only:
