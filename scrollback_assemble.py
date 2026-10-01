@@ -57,7 +57,7 @@ What it does, in order:
   9. Writes a shot log (JSON + Markdown) and a contact sheet per output, so the
      result can be checked frame by frame before anything is uploaded.
 
-Everything is driven by the manifest. See E2.json for a worked example.
+Everything is driven by the manifest. See example_manifest.json for a worked example.
 """
 
 import argparse
