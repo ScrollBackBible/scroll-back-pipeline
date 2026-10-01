@@ -6,6 +6,7 @@ Scroll Back assembly pipeline
 Clip URLs in; one finished 16:9 episode plus the vertical Shorts out.
 
     python3 scrollback_assemble.py E2.json                 # everything
+    python3 scrollback_assemble.py E2.json --check         # script check only: did each take say its lines?
     python3 scrollback_assemble.py E2.json --analyze       # boundary report only, no render
     python3 scrollback_assemble.py E2.json --only E2F1     # just the episode
     python3 scrollback_assemble.py E2.json --draft         # fast, smaller review renders
@@ -19,7 +20,10 @@ What it does, in order:
   1. Downloads each clip (or uses a local path) and probes fps, size, audio.
   2. Analyses each clip: speech (whisper word timings, or silencedetect as a
      fallback), per-frame motion, the model's own internal shot cuts, and the
-     portal's white flash.
+     portal's white flash. Then the script check: what whisper heard against
+     each take's lines, flagging a skipped line, a repeated line, an ad-lib or a
+     take that ends before its last line finishes (--check runs only this, right
+     after generation, and exits 1 if any take needs a look).
   3. Places every cut on a rest frame near the requested point, never inside a
      spoken word, never within a quarter second of an internal shot change
      (and right on the change when one is close by).
@@ -797,6 +801,102 @@ def timed_script_words(clip, fixes):
     return out
 
 
+# ----------------------------------------------------------------------------
+# Script check: did each take actually say its lines?
+# ----------------------------------------------------------------------------
+
+SCRIPT_CHECK = {
+    "min_heard": 0.85,      # share of the script's words that must be heard in the take
+    "max_missing_run": 4,   # this many script words in a row unheard = a skipped or clipped line
+    "max_extra_run": 5,     # this many heard words in a row that aren't in the script = a repeat or an ad-lib
+    "fuzzy": 0.75,          # spelling similarity that still counts as the same word (whisper mangles names)
+}
+
+
+def _similar(a, b, cutoff):
+    return a == b or (len(a) > 2 and len(b) > 2 and difflib.SequenceMatcher(None, a, b).ratio() >= cutoff)
+
+
+def check_script(clip, spec=SCRIPT_CHECK):
+    """Compare what whisper heard in a take with the take's script lines.
+
+    Catches the failures that cost a re-roll: a line skipped, a line said twice, an
+    ad-lib, or the take ending before the last line finishes. The last word of a line
+    written with a trailing dash ("I'm not ready-") is optional, because the portal
+    flash is meant to cut it off. Returns None when the clip has no script lines."""
+    lines = clip.get("lines") or []
+    if not lines:
+        return None
+    res = {"clip": clip["id"], "verdict": "pass", "heard": None, "problems": []}
+    if clip.get("speech_src") != "whisper":
+        res.update(verdict="unchecked", problems=["no word timings (faster-whisper is not installed)"])
+        return res
+    raw, script, optional = [], [], set()
+    for ln in lines:
+        for t in ln.split():
+            if norm_tok(t):
+                raw.append(t.strip(".,;:!?\"'-—…"))
+                script.append(norm_tok(t))
+        if ln.rstrip().endswith(("-", "—")) and script:
+            optional.add(len(script) - 1)
+    heard_raw = [w for _, _, w in clip.get("words") or [] if norm_tok(w)]
+    vocab = set(script)
+    heard = []
+    for w in heard_raw:
+        t = norm_tok(w)
+        if t not in vocab:
+            best = max(vocab, key=lambda v: difflib.SequenceMatcher(None, t, v).ratio())
+            t = best if _similar(t, best, spec["fuzzy"]) else t
+        heard.append(t)
+    sm = difflib.SequenceMatcher(None, heard, script, autojunk=False)
+    got_s, got_h = set(), set()
+    for i, j, n in sm.get_matching_blocks():
+        got_h.update(range(i, i + n))
+        got_s.update(range(j, j + n))
+    needed = [k for k in range(len(script)) if k not in optional]
+    share = sum(1 for k in needed if k in got_s) / max(1, len(needed))
+    res["heard"] = round(share, 3)
+    if share < spec["min_heard"]:
+        res["problems"].append(f"only {share:.0%} of the script was heard")
+
+    def runs(idx, n):
+        out, cur = [], []
+        for k in range(n):
+            if k in idx:
+                cur.append(k)
+            else:
+                if cur:
+                    out.append(cur)
+                cur = []
+        if cur:
+            out.append(cur)
+        return out
+
+    last_needed = needed[-1] if needed else -1
+    for r in runs({k for k in range(len(script)) if k not in got_s and k not in optional}, len(script)):
+        at_end = last_needed in r
+        if len(r) < (2 if at_end else spec["max_missing_run"]):
+            continue  # a single unheard word is usually whisper, not the take
+        text = " ".join(raw[k] for k in r)
+        if at_end:
+            res["problems"].append(f'ends before the last line finishes: "{text}"')
+        else:
+            res["problems"].append(f'skipped or not heard: "{text}"')
+    for r in runs({k for k in range(len(heard)) if k not in got_h}, len(heard)):
+        if len(r) < spec["max_extra_run"]:
+            continue
+        toks = [heard[k] for k in r]
+        m = difflib.SequenceMatcher(None, toks, script, autojunk=False).find_longest_match(0, len(toks), 0, len(script))
+        text = " ".join(heard_raw[k] for k in r)
+        if m.size >= max(3, int(0.6 * len(toks))):
+            res["problems"].append(f'said twice: "{text}"')
+        else:
+            res["problems"].append(f'not in the script: "{text}"')
+    if res["problems"]:
+        res["verdict"] = "re-roll?"
+    return res
+
+
 def caption_chunks(words, fit, maxw, max_gap=0.8):
     """One line per caption: a sentence stays whole if it fits, otherwise it splits into the
     fewest balanced parts that fit, preferring a break after a comma or dash and never
@@ -1120,6 +1220,11 @@ def write_report(report, clips, outdir, name):
         flash = ("%.2fs" % c["flash"]) if c["flash"] is not None else "-"
         md.append(f"| {cid} | {c['duration']:.2f}s | {c['fps']} | {c['width']}x{c['height']} | "
                   f"{c['speech_src']} | {cuts} | {flash} |")
+    if report.get("script_check"):
+        md += ["", "## Script check", "", "| Clip | Heard | Verdict | Notes |", "|---|---|---|---|"]
+        for r in report["script_check"]:
+            heard = "-" if r["heard"] is None else f"{r['heard']:.0%}"
+            md.append(f"| {r['clip']} | {heard} | {r['verdict']} | {'; '.join(r['problems']) or 'all lines heard'} |")
     ep = report.get("episode")
     if ep:
         md += ["", f"## {ep['name']} ({ep.get('duration', '?')}s, {ep['fps']} fps)", "",
@@ -1159,6 +1264,8 @@ def main():
     ap.add_argument("--work", default="work")
     ap.add_argument("--only", default="", help="comma list of outputs, e.g. E2F1,E2S1")
     ap.add_argument("--analyze", action="store_true", help="report cut placement only, render nothing")
+    ap.add_argument("--check", action="store_true",
+                    help="script check only: did each take say its lines? Exit 1 if any take needs a look")
     ap.add_argument("--draft", action="store_true", help="smaller, faster review renders")
     ap.add_argument("--put", action="append", default=[], help="NAME=URL: PUT an output when done")
     args = ap.parse_args()
@@ -1173,10 +1280,12 @@ def main():
     if pref and not os.path.isabs(pref):
         # a relative "font" path is resolved against the manifest's own folder
         pref = os.path.join(os.path.dirname(os.path.abspath(args.manifest)), pref)
-    font = find_font(pref)
-    family, weight = describe_font(font)
-    log(f"font: {font} ({family}, weight {weight})")
-    if ("montserrat" not in family.lower() or weight not in (800, None)) and not man.get("allow_fallback_font"):
+    font, family, weight = None, "", None
+    if not args.check:  # the script check draws no text
+        font = find_font(pref)
+        family, weight = describe_font(font)
+        log(f"font: {font} ({family}, weight {weight})")
+    if not args.check and ("montserrat" not in family.lower() or weight not in (800, None)) and not man.get("allow_fallback_font"):
         raise SystemExit(
             f"font resolved to {font}, not Montserrat ExtraBold. The channel uses one typeface everywhere.\n"
             "Install it (https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/Montserrat-ExtraBold.ttf)\n"
@@ -1190,6 +1299,10 @@ def main():
         need |= set(man["episode_cut"]["clips"])
     for s in wanted_shorts:
         need |= {g["clip"] for g in s["segments"]}
+    if args.check:  # every take that has a url, whether or not an output uses it yet
+        need = {c["id"] for c in man["clips"] if c.get("url") and not c["url"].startswith("TODO")}
+        if only:
+            need &= only
 
     clips = {}
     for c in man["clips"]:
@@ -1205,6 +1318,20 @@ def main():
 
     report = {"manifest": os.path.abspath(args.manifest), "draft": args.draft, "font": font,
               "font_family": family, "font_weight": weight}
+    checks = [r for r in (check_script(c) for c in clips.values()) if r]
+    report["script_check"] = checks
+    for r in checks:
+        for p in r["problems"]:
+            report.setdefault("warnings", []).append(f"script check, {r['clip']}: {p}")
+    if args.check:
+        bad = [r for r in checks if r["verdict"] != "pass"]
+        for r in checks:
+            heard = "-" if r["heard"] is None else f"{r['heard']:.0%}"
+            print(f"{r['clip']:<6} {r['verdict']:<10} heard {heard:>4}  " + ("; ".join(r["problems"]) or "all lines heard"))
+        json.dump(checks, open(os.path.join(args.out, f"E{man['episode']}_scriptcheck.json"), "w"), indent=2)
+        print(f"SCRIPT CHECK: {len(checks) - len(bad)} of {len(checks)} takes pass" +
+              (f"; look at {', '.join(r['clip'] for r in bad)}" if bad else ""))
+        sys.exit(1 if bad else 0)
     if man.get("episode_cut") and (not only or ep_name in only):
         render_episode(man, cfg, clips, args.work, args.out, font, args.draft, report)
     for s in wanted_shorts:
