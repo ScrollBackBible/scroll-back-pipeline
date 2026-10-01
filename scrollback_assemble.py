@@ -10,6 +10,7 @@ Clip URLs in; one finished 16:9 episode plus the vertical Shorts out.
     python3 scrollback_assemble.py E2.json --analyze       # boundary report only, no render
     python3 scrollback_assemble.py E2.json --only E2F1     # just the episode
     python3 scrollback_assemble.py E2.json --draft         # fast, smaller review renders
+    python3 scrollback_assemble.py E2.json --social        # TikTok/Instagram Shorts: end cards point to YouTube
     python3 scrollback_assemble.py E2.json --put E2F1=<presigned PUT url>   # upload a result when done
 
 Needs Python 3.8+, ffmpeg and ffprobe. Optional: faster-whisper (word timings for
@@ -775,6 +776,31 @@ THEME = {            # defaults; the manifest's "theme" block overrides any of t
 }
 
 
+SOCIAL = {           # --social: the TikTok and Instagram versions of the Shorts (Brian, Oct 1)
+    "suffix": "_social",
+    "end_card": ["Full episode on YouTube", "Scroll Back"],
+    "trailer_end_line": "Full episode on YouTube",   # under the big EPISODE n / TOMORROW
+}
+
+
+def social_versions(shorts, man):
+    """The Shorts again for TikTok and Instagram: same cuts and text, but the end card and the
+    trailer's last line point to YouTube. The vertical full episode is already made for them."""
+    soc = dict(SOCIAL, **man.get("social", {}))
+    out = []
+    for s in shorts:
+        if s.get("kind") == "episode":
+            continue
+        t = json.loads(json.dumps(s))
+        t["name"] = s["name"] + soc["suffix"]
+        if s.get("kind") == "trailer":
+            t["trailer_text"] = dict(s.get("trailer_text", {}), end_line=soc["trailer_end_line"])
+        else:
+            t["end_card"] = soc["end_card"]
+        out.append(t)
+    return out
+
+
 def first_flash(segs, starts, clips):
     """Output time of the first portal flash, or None."""
     for i, s in enumerate(segs):
@@ -1409,6 +1435,8 @@ def main():
     ap.add_argument("--check", action="store_true",
                     help="script check only: did each take say its lines? Exit 1 if any take needs a look")
     ap.add_argument("--draft", action="store_true", help="smaller, faster review renders")
+    ap.add_argument("--social", action="store_true",
+                    help="render the TikTok/Instagram versions of the Shorts (NAME_social) instead of the YouTube ones")
     ap.add_argument("--put", action="append", default=[], help="NAME=URL: PUT an output when done")
     args = ap.parse_args()
 
@@ -1436,8 +1464,10 @@ def main():
     only = {x.strip() for x in args.only.split(",") if x.strip()}
     ep_name = man.get("episode_name", f"E{man['episode']}F1")
     wanted_shorts = [s for s in man.get("shorts", []) if not only or s["name"] in only]
+    if args.social:
+        wanted_shorts = social_versions(wanted_shorts, man)
     need = set()
-    if man.get("episode_cut") and (not only or ep_name in only):
+    if man.get("episode_cut") and (not only or ep_name in only) and not args.social:
         need |= set(man["episode_cut"]["clips"])
     for s in wanted_shorts:
         if s.get("kind") == "episode":
@@ -1477,7 +1507,7 @@ def main():
         print(f"SCRIPT CHECK: {len(checks) - len(bad)} of {len(checks)} takes pass" +
               (f"; look at {', '.join(r['clip'] for r in bad)}" if bad else ""))
         sys.exit(1 if bad else 0)
-    if man.get("episode_cut") and (not only or ep_name in only):
+    if man.get("episode_cut") and (not only or ep_name in only) and not args.social:
         render_episode(man, cfg, clips, args.work, args.out, font, args.draft, report)
     for s in wanted_shorts:
         render_short(s, man, cfg, clips, args.work, args.out, font, args.draft, report)
