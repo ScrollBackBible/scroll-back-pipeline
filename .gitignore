@@ -1,0 +1,11 @@
+# real episode manifests hold private clip links - keep them out of this public repo
+E[0-9]*.json
+# render outputs and downloads
+out/
+work/
+*.mp4
+*.mkv
+*.png
+*.jpg
+*.ttf
+__pycache__/

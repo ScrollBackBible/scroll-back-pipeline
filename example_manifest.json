@@ -1,0 +1,171 @@
+{
+  "_about": "Example manifest, copied from Episode 2 with the clip links removed. Copy it to E{n}.json for a new episode, paste each finished clip's URL, and update the title, lines, Shorts hooks and cut points. Real manifests contain private clip links, so they are not kept in this public repo.",
+  "episode": 2,
+  "title": "WHY DID JESUS\nFLIP THE TABLES?",
+  "text_color": "#F6F0E6",
+  "loudness": {
+    "I": -14,
+    "TP": -2.0,
+    "LRA": 11
+  },
+  "dissolve": 0.35,
+  "short_frame": "letterbox",
+  "short_fill": "blur",
+  "short_zoom": 1.0,
+  "clips": [
+    {
+      "id": "S1",
+      "portal": true,
+      "url": "TODO: paste this clip's Higgsfield result URL",
+      "lines": [
+        "Okay, so Jesus walks into church and starts flipping furniture. That's the guy?",
+        "It's a temple, not a church.",
+        "He made a whip, Sayna.",
+        "He did. Let's scroll back.",
+        "No - no no no, not again, I'm not ready-"
+      ]
+    },
+    {
+      "id": "S2",
+      "url": "TODO: paste this clip's Higgsfield result URL",
+      "lines": [
+        "This is a market. Why is there a market?",
+        "Passover. Everyone needs an unblemished animal to sacrifice - so they sell you one. And your money's no good here. You change it first.",
+        "They just turned that family away.",
+        "Their lamb wasn't good enough. Whether that was a racket, John doesn't say.",
+        "So you come to worship and get charged at the door.",
+        "In the one court foreigners were allowed to pray in."
+      ]
+    },
+    {
+      "id": "S3",
+      "url": "TODO: paste this clip's Higgsfield result URL",
+      "lines": [
+        "He's making it. He's actually making it.",
+        "Out of the cords they tie the animals with.",
+        "Is he angry?",
+        "Watch what he does first."
+      ]
+    },
+    {
+      "id": "S4",
+      "url": "TODO: paste this clip's Higgsfield result URL",
+      "lines": [
+        "Take these things away; do not make my Father's house a house of trade.",
+        "Okay, that's a lot."
+      ]
+    },
+    {
+      "id": "S5A",
+      "url": "TODO: paste this clip's Higgsfield result URL",
+      "lines": [
+        "So he lost his temper.",
+        "He was angry. He also stopped and braided a whip first. That's not losing control - that's deciding.",
+        "That's somehow worse.",
+        "It isn't a tantrum. It's a claim. He calls this his Father's house. Then he clears it. Only one kind of person gets to do that."
+      ],
+      "portal": true,
+      "_note": "Ends on the flash home (golden glow build-up, then the hard white flash); hard cut into 5B."
+    },
+    {
+      "id": "S5B",
+      "url": "TODO: paste this clip's Higgsfield result URL",
+      "lines": [
+        "So the whip was about-",
+        "Who he is. Not how mad he was.",
+        "...I still want that coin.",
+        "What's your question? Ask below."
+      ]
+    }
+  ],
+  "episode_cut": {
+    "clips": [
+      "S1",
+      "S2",
+      "S3",
+      "S4",
+      "S5A",
+      "S5B"
+    ],
+    "title_lead": 3.0,
+    "title_hold_after": 0.8,
+    "end_card": {
+      "lines": [
+        "New episodes every week",
+        "SCROLL BACK"
+      ],
+      "seconds": 4,
+      "_note": "first line is the gold kicker, the rest are the cream title lines (lower-third style, see the production bible). Never name a weekday on screen, so the card stays true if the schedule moves."
+    },
+    "fade_out": 0.6
+  },
+  "shorts": [
+    {
+      "name": "E2S1",
+      "_title": "Jesus made a whip",
+      "kind": "trailer",
+      "_note": "Posts Tue Oct 6, the day before the episode. All of scene 1, ending on the portal flash (trimming to 18s would cut Ollie's opening line). No captions. Text beats are built in (A NEW SERIES into SCROLL BACK, the pitch at 5s, then EPISODE n / TOMORROW / Subscribe over the last 4s); override any of them in trailer_text.",
+      "segments": [
+        {
+          "clip": "S1"
+        }
+      ],
+      "trailer_text": {
+        "pitch": "Two students. One Bible.\nEvery question you were afraid to ask.",
+        "end_title": "Tomorrow"
+      }
+    },
+    {
+      "name": "E2S2",
+      "_title": "They filled the prayer court with cattle",
+      "_note": "Scene 2 whole. The last line runs to the end of the clip, so hold=auto freezes the last frame ~2.5s for the end card.",
+      "segments": [
+        {
+          "clip": "S2"
+        }
+      ],
+      "hook": "Why a market?",
+      "hold": "auto"
+    },
+    {
+      "name": "E2S3",
+      "_title": "He braided it himself",
+      "segments": [
+        {
+          "clip": "S3",
+          "in": 1.583
+        }
+      ],
+      "hook": "He braided it",
+      "hold": "auto",
+      "_note": "Starts on the clip's first internal shot change (1.58s) so it opens on a clean shot."
+    },
+    {
+      "name": "E2S4",
+      "_title": "The tables go over",
+      "_note": "No hook text. Starts on the shot change at 1.13s where the action begins.",
+      "segments": [
+        {
+          "clip": "S4",
+          "in": 1.125
+        }
+      ],
+      "hold": "auto"
+    },
+    {
+      "name": "E2S5",
+      "_title": "It wasn't a tantrum",
+      "segments": [
+        {
+          "clip": "S5A",
+          "out": 24.75
+        }
+      ],
+      "hook": "Not a tantrum",
+      "hold": "auto",
+      "_note": "Ends just before the golden glow (about 25.0s), so the end card is not over the white flash."
+    }
+  ],
+  "font": "Montserrat-ExtraBold.ttf",
+  "_font_note": "Montserrat ExtraBold (weight 800). A relative path is resolved against this manifest's folder, so keep the .ttf next to E2.json, or give an absolute path. Source: https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/Montserrat-ExtraBold.ttf. The script reads the family and weight from the file and refuses to render in anything else."
+}
