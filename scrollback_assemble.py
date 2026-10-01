@@ -1412,8 +1412,18 @@ def write_report(report, clips, outdir, name):
 
 
 def put_file(path, url):
-    size = os.path.getsize(path)
+    """PUT a finished file to a presigned upload URL. Uses curl: the upload host refuses
+    Python's own HTTP client (HTTP 403, seen Oct 1) but accepts the same request from curl."""
     ctype = "video/mp4" if path.endswith(".mp4") else ("image/png" if path.endswith(".png") else "application/octet-stream")
+    if shutil.which("curl"):
+        p = subprocess.run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-X", "PUT",
+                            "-H", f"Content-Type: {ctype}", "-H", "If-None-Match: *",
+                            "--upload-file", path, url], capture_output=True, text=True)
+        code = int(p.stdout.strip() or 0)
+        if code != 200:
+            raise RuntimeError(f"PUT {os.path.basename(path)} failed: HTTP {code}")
+        return code
+    size = os.path.getsize(path)
     with open(path, "rb") as f:
         req = urllib.request.Request(url, data=f, method="PUT",
                                      headers={"Content-Type": ctype, "Content-Length": str(size), "If-None-Match": "*"})
