@@ -807,7 +807,7 @@ def timed_script_words(clip, fixes):
 
 SCRIPT_CHECK = {
     "min_heard": 0.85,      # share of the script's words that must be heard in the take
-    "max_missing_run": 4,   # this many script words in a row unheard = a skipped or clipped line
+    "max_missing_run": 3,   # this many script words in a row unheard = a skipped or clipped line
     "max_extra_run": 5,     # this many heard words in a row that aren't in the script = a repeat or an ad-lib
     "fuzzy": 0.75,          # spelling similarity that still counts as the same word (whisper mangles names)
 }
