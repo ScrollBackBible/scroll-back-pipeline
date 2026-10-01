@@ -44,6 +44,10 @@ What it does, in order:
      "short_zoom" > 1 enlarges the picture and trims the sides (crop_x steers it);
      "short_frame": "crop" switches to a full-height 9:16 cut-out instead.
      Vertical footage (Episode 1 style) fills the screen as before.
+     A Short with "kind": "episode" is the whole episode as a vertical video for
+     TikTok and Instagram (E{n}F1V): the episode's own cuts and dissolves,
+     captions throughout, the title riding the portal flash in the top band, and
+     the episode's end card after the last line.
   7. Two-pass loudness normalisation on every output (-14 LUFS, -2 dBTP).
   8. Writes a shot log (JSON + Markdown) and a contact sheet per output, so the
      result can be checked frame by frame before anything is uploaded.
@@ -1026,6 +1030,19 @@ def render_episode(man, cfg, clips, work, outdir, font, draft, report):
 
 def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
     name = sh["name"]
+    kind = sh.get("kind", "content")
+    ep = man.get("episode_cut") or {}
+    if kind == "episode":
+        # The whole episode as a vertical video (for TikTok and Instagram): the episode's own
+        # cuts and dissolves, captions throughout, the title riding the portal flash in the top
+        # band, and the episode's end card in the bottom band after the last line.
+        if not ep:
+            raise SystemExit(f"{name}: kind 'episode' needs an episode_cut in the manifest")
+        segments = []
+        for cid in ep["clips"]:
+            c = next(x for x in man["clips"] if x["id"] == cid)
+            segments.append({"clip": cid, "in": c.get("in"), "out": c.get("out"), "portal": bool(c.get("portal"))})
+        sh = dict({"hold": "auto", "end_card": (ep.get("end_card") or {}).get("lines")}, **sh, segments=segments)
     segs = []
     for s in sh["segments"]:
         c = next(x for x in man["clips"] if x["id"] == s["clip"])
@@ -1057,7 +1074,16 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
             "crop": f"{size[0]}x{size[1]} (9:16 crop of widescreen), scaled x{Wt / size[0]:.2f}",
             "letterbox": f"{src_w}x{src_h} full frame, letterboxed, scaled x{Wt * zoom / src_w:.2f}"
                          + (f" (zoom {zoom:g})" if zoom > 1 else "")}[mode]
-    rep = {"name": name, "kind": sh.get("kind", "content"), "segments": segs, "frame": desc}
+    rep = {"name": name, "kind": kind, "segments": segs, "frame": desc}
+    if kind == "episode":
+        trans, labels = [], []
+        for a, b in zip(segs, segs[1:]):
+            d, why = choose_transition(a, b, clips, cfg["dissolve"], float(fps))
+            trans.append(d)
+            labels.append(why)
+        rep["transitions"] = labels
+    else:
+        trans = [frame] * (len(segs) - 1)
     report.setdefault("shorts", []).append(rep)
     if man.get("_analyze"):
         return
@@ -1066,7 +1092,7 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
                                crop_x=crops[i])
              for i, s in enumerate(segs)]
     base = os.path.join(work, f"{name}_joined.mkv")
-    total, starts = chain(parts, [frame] * (len(parts) - 1), fps, base, draft)
+    total, starts = chain(parts, trans, fps, base, draft)
 
     W, H = (720, 1280) if draft else tuple(cfg["short_size"])
     # Layout: where the picture sits and where each text zone is centred.
@@ -1106,8 +1132,9 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
             cap_words += [(a + shift, b + shift, w) for a, b, w in ws]
         if not any(clips[s["clip"]].get("words") for s in segs):
             report.setdefault("warnings", []).append(f"{name}: no word timings (install faster-whisper); captions skipped")
-    card = None if sh.get("kind") == "trailer" else sh.get("end_card", ["Full episode on the channel", "Scroll Back"])
-    card_secs = T["card_secs"] if card else 0.0
+    card = None if kind == "trailer" else sh.get("end_card", ["Full episode on the channel", "Scroll Back"])
+    card_secs = (float((ep.get("end_card") or {}).get("seconds", T["card_secs"])) if kind == "episode"
+                 else T["card_secs"]) if card else 0.0
     hold = sh.get("hold", 0.0)
     if hold == "auto":
         # freeze the last frame just long enough for the end card to come after the last word
@@ -1140,6 +1167,26 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
                  for ln in wrap_px(fh, hook, T["hook_maxw"] * k, T["hook_tracking"])],
                 hook_y, 0.0, sh.get("hook_until", T["hook_secs"]), rise=T["card_rise_px"])
         card_s = total - card_secs
+        if kind == "episode" and man.get("title"):
+            # the title-card block rides the portal flash, as in the 16:9 episode, but in the top band
+            pi = next((i for i, s in enumerate(segs) if s["portal"]), None)
+            if pi is not None and clips[segs[pi]["clip"]]["flash"] is not None:
+                flash_t = starts[pi] + (clips[segs[pi]["clip"]]["flash"] - segs[pi]["in"])
+                t0 = max(0.0, flash_t - ep.get("title_lead", 3.0))
+                t1 = flash_t + ep.get("title_hold_after", 0.8)
+                lines = [ln.upper() for ln in man["title"].split("\n")]
+                tsz = T["card_title_size"]
+                while tsz > 40:   # largest size up to the end-card title that fits the caption width
+                    ft = ImageFont.truetype(font, int(round(tsz * k)))
+                    if max(text_w(ft, ln, T["title_tracking"]) for ln in lines) <= T["caption_maxw"] * k:
+                        break
+                    tsz -= 2
+                kicker = ep.get("kicker", f"SCROLL BACK  ·  EPISODE {man['episode']}")
+                add([st_kicker(kicker, T["card_kicker_size"]), st_rule()] + [st_title(ln, tsz) for ln in lines],
+                    hook_y, t0, t1, fade=0.3, rise=T["card_rise_px"])
+                rep["title_window"] = [round(t0, 2), round(t1, 2)]
+            else:
+                report.setdefault("warnings", []).append(f"{name}: no portal flash found, so the title was not placed")
         if card:
             kick, *rest = card if len(card) > 1 else ["", card[0]]
             add([st_kicker(kick, T["card_kicker_size"]), st_rule()] + [st_title(r, T["card_title_size"]) for r in rest],
@@ -1183,15 +1230,20 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
                  f"fade=t=out:st={fnum(e - fd)}:d={fnum(fd)}:alpha=1[l{i}]")
         yexpr = (f"'{y0:.1f}+{rise:.1f}*pow(max(0\\,1-(t-{fnum(s)})/0.6)\\,2)':eval=frame" if rise else f"{y0:.1f}")
         g.append(f"[c{i - 1}][l{i}]overlay=x=0:y={yexpr}:shortest=1:enable='between(t,{fnum(s)},{fnum(e)})'[c{i}]")
+    vout = f"c{len(layers)}"
+    fade = ep.get("fade_out", 0.6) if kind == "episode" else 0.0
+    if fade:
+        g.append(f"[{vout}]fade=t=out:st={fnum(total - fade)}:d={fnum(fade)}[vend]")
+        vout = "vend"
     script = os.path.join(work, f"{name}.filter.txt")
     open(script, "w").write(";\n".join(g))
     stage = os.path.join(work, f"{name}_stage.mkv")
     run(["ffmpeg", "-y", "-v", "error"] + ins + ["-filter_complex_script", script,
-         "-map", f"[c{len(layers)}]", "-map", "[aout]", "-r", str(fps), "-c:v", "libx264",
+         "-map", f"[{vout}]", "-map", "[aout]", "-r", str(fps), "-c:v", "libx264",
          "-preset", "veryfast" if draft else "medium", "-crf", "20" if draft else "18",
          "-profile:v", "high", "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", stage])
     out = os.path.join(outdir, f"{name}.mp4")
-    measured = loudnorm_finish(stage, out, cfg["loudness"])
+    measured = loudnorm_finish(stage, out, cfg["loudness"], fade_out=(total - fade, fade) if fade else None)
     contact_sheet(out, os.path.join(outdir, f"{name}_contact.png"), cols=6, every=1.5, thumb_w=180)
     rep.update(output=out, duration=round(total, 2), loudness_in=measured)
 
