@@ -21,7 +21,8 @@ What it does, in order:
      fallback), per-frame motion, the model's own internal shot cuts, and the
      portal's white flash.
   3. Places every cut on a rest frame near the requested point, never inside a
-     spoken word, never 1-2 frames either side of an internal shot change.
+     spoken word, never within a quarter second of an internal shot change
+     (and right on the change when one is close by).
   4. Chooses a dissolve where both sides are quiet at the join, a hard cut
      where anyone is speaking across it, and always a hard cut out of the portal.
   5. Renders the master at the clips' native frame rate, then the 16:9 episode:
@@ -339,10 +340,13 @@ def place_cut(t_req, lo, hi, clip, pad, kind):
         t = i / fps
         if in_speech(t, clip["speech"], pad):
             continue
-        near_cut = any(0 < abs(i - c) <= 2 for c in cuts)
+        near_cut = any(0 < abs(i - c) <= 6 for c in cuts)
         if near_cut:
-            continue  # would leave a 1-2 frame flash of the neighbouring shot
-        m = [diff[j] for j in (i - 1, i, i + 1) if 0 < j < n]
+            continue  # would leave a flash (up to a quarter second) of the neighbouring shot
+        if i in cuts:
+            m = [diff[j] for j in (i + 1, i + 2) if 0 < j < n]   # the cut's own jump is not motion
+        else:
+            m = [diff[j] for j in (i - 1, i, i + 1) if 0 < j < n]
         motion = (sum(m) / len(m) if m else 0.0) / med
         score = motion + 0.8 * abs(t - t_req) / window
         if i in cuts:
