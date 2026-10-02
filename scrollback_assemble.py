@@ -749,8 +749,11 @@ def loudnorm_finish(src, dst, loud, video_copy=True, fade_out=None):
           f"aformat=sample_fmts=fltp:channel_layouts=stereo")
     if fade_out:
         af += f",afade=t=out:st={fnum(fade_out[0])}:d={fnum(fade_out[1])}"
+    # Instagram's publishing API wants AAC at 128 kbps or less and no MP4 edit list;
+    # negative_cts_offsets keeps both tracks starting at zero without one.
     run(["ffmpeg", "-y", "-v", "error", "-i", src, "-c:v", "copy", "-af", af,
-         "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", dst])
+         "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
+         "-movflags", "+faststart+negative_cts_offsets", "-use_editlist", "0", dst])
     return float(meas["input_i"])
 
 
