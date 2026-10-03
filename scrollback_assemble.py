@@ -1303,11 +1303,27 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
                 card_y, card_s, total - 0.05, fade=0.3, rise=T["card_rise_px"])
         fc = ImageFont.truetype(font, int(round(T["caption_size"] * k)))
         chunks = caption_chunks(cap_words, fc.getlength, T["caption_maxw"] * k)
+        # A quickly spoken chunk ("He didn't", "Nope.") used to be dropped when it had less than
+        # 0.2s on screen, so the captions skipped script words. Now it joins the next chunk when
+        # the two fit on one line; otherwise it gets 0.25s and the next chunk starts just after.
+        chunks = [list(c) for c in chunks]
+        j = 0
+        while j < len(chunks) - 1:
+            a, b, text = chunks[j]
+            na, nb, ntext = chunks[j + 1]
+            if min(b + 0.12, na - 0.03) - a < 0.25 and fc.getlength(text + " " + ntext) <= T["caption_maxw"] * k:
+                chunks[j] = [a, nb, text + " " + ntext]
+                del chunks[j + 1]
+                continue
+            j += 1
         caps = []
         for j, (a, b, text) in enumerate(chunks):
+            if j and a < caps[-1][1] + 0.03:
+                a = caps[-1][1] + 0.03  # the chunk before was stretched to stay readable
             b2 = min(b + 0.12, chunks[j + 1][0] - 0.03 if j + 1 < len(chunks) else 1e9, card_s - 0.05)
-            if b2 - a < 0.2:
-                continue
+            b2 = max(b2, min(a + 0.25, card_s - 0.05))
+            if b2 - a < 0.05:
+                continue  # only possible right against the end card
             add(st_plain(wrap_px(fc, text, T["caption_maxw"] * k), T["caption_size"], 4), cap_y,
                 max(0.0, a), b2, fade=0.05, outline=T["caption_outline"])
             caps.append([round(max(0.0, a), 2), round(b2, 2), text])
