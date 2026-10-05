@@ -10,7 +10,8 @@ Clip URLs in; one finished 16:9 episode plus the vertical Shorts out.
     python3 scrollback_assemble.py E2.json --analyze       # boundary report only, no render
     python3 scrollback_assemble.py E2.json --only E2F1     # just the episode
     python3 scrollback_assemble.py E2.json --draft         # fast, smaller review renders
-    python3 scrollback_assemble.py E2.json --social        # TikTok/Instagram Shorts: end cards point to YouTube
+    python3 scrollback_assemble.py E2.json --social        # Instagram Shorts: end cards point to YouTube
+    python3 scrollback_assemble.py E2.json --tiktok        # TikTok Shorts: end cards point to the full episode on the TikTok page
     python3 scrollback_assemble.py E2.json --put E2F1=<presigned PUT url>   # upload a result when done
 
 Needs Python 3.8+, ffmpeg and ffprobe. Optional: faster-whisper (word timings for
@@ -48,7 +49,10 @@ What it does, in order:
      A Short with "kind": "episode" is the whole episode as a vertical video for
      TikTok and Instagram (E{n}F1V): the episode's own cuts and dissolves,
      captions throughout, the title riding the portal flash in the top band, and
-     the episode's end card after the last line.
+     the episode's end card after the last line. Its first frame is a cover (the picture,
+     EPISODE n and the title above it, FULL EPISODE below, inside the 3:4 area profile
+     grids show): TikTok uses the first frame as the cover, so a viewer never sees it but
+     the profile grid does. "cover": false turns it off.
   7. If the manifest has a "theme" block, the series theme plays under the cold
      open of the episode, the vertical episode and the trailer: it starts with the
      video, dips under speech, and fades out through the teleport, ending a second
@@ -779,17 +783,25 @@ THEME = {            # defaults; the manifest's "theme" block overrides any of t
 }
 
 
-SOCIAL = {           # --social: the TikTok and Instagram versions of the Shorts (Brian, Oct 1)
+SOCIAL = {           # --social: the Instagram versions of the Shorts point to YouTube (Brian, Oct 1)
     "suffix": "_social",
     "end_card": ["Full episode on YouTube", "Scroll Back"],
     "trailer_end_line": "Full episode on YouTube",   # under the big EPISODE n / TOMORROW
 }
 
+TIKTOK = {           # --tiktok: TikTok pays for views on TikTok, so its Shorts send viewers to the
+    "suffix": "_tiktok",   # full episode on the same TikTok page, not to YouTube (Brian, Oct 5)
+    "end_card": ["Full episode on our page", "Scroll Back"],
+    "trailer_end_line": "Full episode on our page",
+}
 
-def social_versions(shorts, man):
-    """The Shorts again for TikTok and Instagram: same cuts and text, but the end card and the
-    trailer's last line point to YouTube. The vertical full episode is already made for them."""
-    soc = dict(SOCIAL, **man.get("social", {}))
+
+def social_versions(shorts, man, base=SOCIAL, key="social"):
+    """The Shorts again for another platform: same cuts and text, but the end card and the
+    trailer's last line point where that platform's viewers should go (Instagram: YouTube;
+    TikTok: the full episode on the TikTok page). The vertical full episode is already made for them.
+    The manifest's "social" or "tiktok" block overrides any of the defaults."""
+    soc = dict(base, **man.get(key, {}))
     out = []
     for s in shorts:
         if s.get("kind") == "episode":
@@ -802,6 +814,112 @@ def social_versions(shorts, man):
             t["end_card"] = soc["end_card"]
         out.append(t)
     return out
+
+
+COVER = {           # the vertical episode's first frame doubles as its cover (Brian, Oct 5)
+    "label": "Full episode",
+    "safe": 0.75,          # profile grids crop the 9:16 cover to 3:4, so text stays in the middle 3/4 of the height
+    "after_flash": 1.5,    # default picture: the first scene after the portal, this many seconds in
+    "title_max": 96, "title_min": 52,
+    "label_size": 54,
+}
+
+
+def build_cover(sh, man, base, total, flash_t, W, H, font, work, outdir, name, rep, report):
+    """A 9:16 cover for the vertical episode, laid out like the Shorts: the picture at full width
+    over a darkened blur of itself, the episode kicker, rule and title above it, FULL EPISODE
+    below, all inside the 3:4 area that TikTok's and Instagram's profile grids show.
+    TikTok uses a video's first frame as its cover when none is chosen, and Metricool can't set
+    one on a personal TikTok account, so this goes on frame 0 of the video itself.
+    Manifest: "cover": false turns it off; "cover": {"image": url or path, "at": seconds,
+    "kicker": ..., "title": ..., "label": ...} overrides the defaults."""
+    spec = sh.get("cover", man.get("cover", True))
+    if spec is False:
+        return None
+    spec = dict(COVER, **(spec if isinstance(spec, dict) else {}))
+    from PIL import Image, ImageEnhance, ImageFilter, ImageFont
+    src = os.path.join(work, f"{name}_cover_src.png")
+    if spec.get("image"):
+        ext = os.path.splitext(spec["image"].split("?")[0])[1] or ".png"
+        raw = fetch(spec["image"], os.path.join(work, f"{name}_cover_image{ext}"))
+        Image.open(raw).convert("RGB").save(src)
+        rep["cover_source"] = spec["image"]
+    else:
+        at = spec.get("at")
+        if at is None:
+            at = flash_t + spec["after_flash"] if flash_t is not None else total * 0.4
+        at = min(max(0.0, float(at)), max(0.0, total - 0.1))
+        run(["ffmpeg", "-y", "-v", "error", "-ss", fnum(at), "-i", base, "-frames:v", "1", src])
+        rep["cover_source"] = f"frame at {at:.2f}s"
+    img = Image.open(src).convert("RGB")
+    iw, ih = img.size
+    k = H / 1920.0
+    T = SHORT_TEXT
+    # background: the same picture, filling the frame, blurred and darkened (the Shorts' blur bands)
+    s = max(W / iw, H / ih)
+    bg = img.resize((int(iw * s) + 1, int(ih * s) + 1), Image.LANCZOS)
+    bg = bg.crop(((bg.width - W) // 2, (bg.height - H) // 2, (bg.width - W) // 2 + W, (bg.height - H) // 2 + H))
+    bg = ImageEnhance.Color(ImageEnhance.Brightness(bg.filter(ImageFilter.GaussianBlur(28 * k))).enhance(0.62)).enhance(0.85)
+    canvas = bg.convert("RGBA")
+    if iw > ih:   # widescreen: the whole frame at full width, centred
+        fh = int(round(W * ih / iw))
+        canvas.alpha_composite(img.resize((W, fh), Image.LANCZOS).convert("RGBA"), (0, (H - fh) // 2))
+        pic_top, pic_bot = (H - fh) // 2, (H - fh) // 2 + fh
+    else:         # vertical footage: the blur stays sharp-ish behind the text instead
+        canvas = img.resize((int(iw * s) + 1, int(ih * s) + 1), Image.LANCZOS).crop(
+            ((int(iw * s) + 1 - W) // 2, (int(ih * s) + 1 - H) // 2,
+             (int(iw * s) + 1 - W) // 2 + W, (int(ih * s) + 1 - H) // 2 + H)).convert("RGBA")
+        pic_top, pic_bot = int(H * 0.40), int(H * 0.62)
+    top_safe, bot_safe = H * (1 - spec["safe"]) / 2, H * (1 + spec["safe"]) / 2
+    # the title block above the picture: largest title size that fits the width and the space
+    kicker = spec.get("kicker", f"Episode {man['episode']}")
+    title = spec.get("title", man.get("title", ""))
+    room = pic_top - top_safe - 10 * k
+    maxw = W * 0.9
+    block_png = os.path.join(work, f"{name}_cover_title.png")
+    paras = [p.strip() for p in title.upper().split("\n") if p.strip()]
+
+    def title_block(tsz, wrap):
+        ft = ImageFont.truetype(font, max(1, int(round(tsz * k))))
+        lines = []
+        for para in paras:
+            lines += wrap_px(ft, para, maxw, T["title_tracking"]) if wrap else [para]
+        too_wide = any(text_w(ft, ln, T["title_tracking"]) > maxw for ln in lines)
+        rows = [st_kicker(kicker, T["card_kicker_size"] * 1.25), st_rule()] + [st_title(ln, tsz, 6) for ln in lines]
+        return lines, too_wide, rows
+
+    # keep the title's own line breaks at the largest size that fits; wrap only if no size does
+    pick = None
+    for wrap in (False, True):
+        for tsz in range(spec["title_max"], spec["title_min"] - 1, -4):
+            lines, too_wide, rows = title_block(tsz, wrap)
+            if too_wide:
+                continue
+            hc = short_block_png(rows, font, W, k, block_png)
+            if hc - 2 * T["pad"] * k <= room:
+                pick = (tsz, lines, hc)
+                break
+        if pick:
+            break
+    if not pick:   # nothing fits: smallest size, wrapped, and say so
+        tsz = spec["title_min"]
+        lines, _, rows = title_block(tsz, True)
+        pick = (tsz, lines, short_block_png(rows, font, W, k, block_png))
+    tsz, lines, hc = pick
+    if hc - 2 * T["pad"] * k > room:
+        report.setdefault("warnings", []).append(f"{name}: the cover title doesn't fit above the picture; shorten it")
+    blk = Image.open(block_png)
+    canvas.alpha_composite(blk, (0, int(round(top_safe + room / 2 - hc / 2 + 5 * k))))
+    # FULL EPISODE below the picture
+    label_png = os.path.join(work, f"{name}_cover_label.png")
+    hl = short_block_png([st_kicker(spec["label"], spec["label_size"])], font, W, k, label_png)
+    below = bot_safe - pic_bot
+    canvas.alpha_composite(Image.open(label_png), (0, int(round(pic_bot + below * 0.38 - hl / 2))))
+    path = os.path.join(work, f"{name}_cover.png")
+    canvas.convert("RGB").save(path)
+    shutil.copyfile(path, os.path.join(outdir, f"{name}_cover.png"))   # to look at before uploading
+    rep["cover"] = {"title_size": tsz, "lines": lines, "png": os.path.join(outdir, f"{name}_cover.png")}
+    return path
 
 
 def first_flash(segs, starts, clips):
@@ -1341,6 +1459,14 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
             wav, rep["theme"] = mix_theme(base, man, portal_t, work, name)
             ins += ["-i", wav]
             asrc = f"{1 + len(layers)}:a"
+    cover = None
+    if kind == "episode":
+        # the first frame is the cover TikTok and Instagram show on the profile grid
+        cover = build_cover(sh, man, base, total, first_flash(segs, starts, clips), W, H, font, work, outdir,
+                            name, rep, report)
+        if cover:
+            cov_idx = 1 + len(layers) + (0 if asrc == "0:a" else 1)
+            ins += ["-loop", "1", "-framerate", str(fps), "-t", fnum(total + 1), "-i", cover]
     g = [f"[0:v]setpts=PTS-STARTPTS" + (f",tpad=stop_mode=clone:stop_duration={hold:.3f}" if hold else "") + "[src]",
          f"[{asrc}]asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
          + (f",apad=pad_dur={hold:.3f}" if hold else "") + "[aout]"]
@@ -1370,6 +1496,10 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
     if fade:
         g.append(f"[{vout}]fade=t=out:st={fnum(total - fade)}:d={fnum(fade)}[vend]")
         vout = "vend"
+    if cover:   # frame 0 only: a viewer never sees it, the profile grid does
+        g.append(f"[{cov_idx}:v]format=rgba,setsar=1[cov]")
+        g.append(f"[{vout}][cov]overlay=0:0:shortest=1:enable='eq(n,0)'[vcov]")
+        vout = "vcov"
     script = os.path.join(work, f"{name}.filter.txt")
     open(script, "w").write(";\n".join(g))
     stage = os.path.join(work, f"{name}_stage.mkv")
@@ -1465,7 +1595,11 @@ def main():
                     help="script check only: did each take say its lines? Exit 1 if any take needs a look")
     ap.add_argument("--draft", action="store_true", help="smaller, faster review renders")
     ap.add_argument("--social", action="store_true",
-                    help="render the TikTok/Instagram versions of the Shorts (NAME_social) instead of the YouTube ones")
+                    help="render the Instagram versions of the Shorts (NAME_social, end cards point to YouTube) "
+                         "instead of the YouTube ones")
+    ap.add_argument("--tiktok", action="store_true",
+                    help="render the TikTok versions of the Shorts (NAME_tiktok, end cards point to the full "
+                         "episode on the TikTok page) instead of the YouTube ones; combine with --social for both")
     ap.add_argument("--put", action="append", default=[], help="NAME=URL: PUT an output when done")
     args = ap.parse_args()
 
@@ -1493,10 +1627,12 @@ def main():
     only = {x.strip() for x in args.only.split(",") if x.strip()}
     ep_name = man.get("episode_name", f"E{man['episode']}F1")
     wanted_shorts = [s for s in man.get("shorts", []) if not only or s["name"] in only]
-    if args.social:
-        wanted_shorts = social_versions(wanted_shorts, man)
+    variants = args.social or args.tiktok
+    if variants:
+        wanted_shorts = ((social_versions(wanted_shorts, man) if args.social else []) +
+                         (social_versions(wanted_shorts, man, TIKTOK, "tiktok") if args.tiktok else []))
     need = set()
-    if man.get("episode_cut") and (not only or ep_name in only) and not args.social:
+    if man.get("episode_cut") and (not only or ep_name in only) and not variants:
         need |= set(man["episode_cut"]["clips"])
     for s in wanted_shorts:
         if s.get("kind") == "episode":
@@ -1536,7 +1672,7 @@ def main():
         print(f"SCRIPT CHECK: {len(checks) - len(bad)} of {len(checks)} takes pass" +
               (f"; look at {', '.join(r['clip'] for r in bad)}" if bad else ""))
         sys.exit(1 if bad else 0)
-    if man.get("episode_cut") and (not only or ep_name in only) and not args.social:
+    if man.get("episode_cut") and (not only or ep_name in only) and not variants:
         render_episode(man, cfg, clips, args.work, args.out, font, args.draft, report)
     for s in wanted_shorts:
         render_short(s, man, cfg, clips, args.work, args.out, font, args.draft, report)
