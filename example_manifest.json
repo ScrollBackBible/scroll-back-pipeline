@@ -174,10 +174,10 @@
   "font": "Montserrat-ExtraBold.ttf",
   "_font_note": "Montserrat ExtraBold (weight 800). A relative path is resolved against this manifest's folder, so keep the .ttf next to E2.json, or give an absolute path. Source: https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/Montserrat-ExtraBold.ttf. The script reads the family and weight from the file and refuses to render in anything else.",
   "theme": {
-    "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3Ih9xvYO0SSeffFtZcr48MqbHta/6f235bc6-9a4f-4d09-9cd8-da1b43cf42e1.mp3",
-    "fade_from": -1.0,
-    "fade_to": 1.5,
+    "url": "https://d2ol7oe51mr4n9.cloudfront.net/user_3Ih9xvYO0SSeffFtZcr48MqbHta/936c9826-5ad4-4479-8e3e-9c87f524518a.mp3",
+    "fade_from": 0.0,
+    "fade_to": 3.0,
     "level_lu": -10,
-    "_note": "Scroll Back theme v1, an original royalty-free track made with vidIQ's music tool on Oct 1 (31.7s). It starts with the video and fades out through the teleport: from 1s before the portal flash to 1.5s after it."
+    "_note": "Scroll Back theme v2 (Brian's pick, Oct 6): an original royalty-free cinematic adventure track made with vidIQ's music tool (34.7s). It starts with the video, sits under the dialogue, and starts fading out right on the portal flash, silent 3s later. Theme v1 (6f235bc6, fading from 1s before the flash to 1.5s after) is on Episodes 1 to 3."
   }
 }

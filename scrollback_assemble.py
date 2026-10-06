@@ -55,8 +55,8 @@ What it does, in order:
      the profile grid does. "cover": false turns it off.
   7. If the manifest has a "theme" block, the series theme plays under the cold
      open of the episode, the vertical episode and the trailer: it starts with the
-     video, dips under speech, and fades out through the teleport, ending a second
-     or two after the portal flash.
+     video, dips under speech, and starts fading out on the portal flash, gone about
+     3 seconds into the new scene.
   8. Two-pass loudness normalisation on every output (-14 LUFS, -2 dBTP).
   9. Writes a shot log (JSON + Markdown) and a contact sheet per output, so the
      result can be checked frame by frame before anything is uploaded.
@@ -774,8 +774,8 @@ def contact_sheet(video, png, cols=6, every=2.0, thumb_w=240):
 # ----------------------------------------------------------------------------
 
 THEME = {            # defaults; the manifest's "theme" block overrides any of these
-    "fade_from": -1.0,     # the fade-out starts this many seconds before the portal flash (the golden glow) ...
-    "fade_to": 1.5,        # ... and the theme is silent this many seconds after it
+    "fade_from": 0.0,      # the fade-out starts this many seconds after the portal flash (0 = on the flash) ...
+    "fade_to": 3.0,        # ... and the theme is silent this many seconds after it (Brian's spec, Oct 6)
     "level_lu": -10.0,     # bed level against the opening's dialogue, in LU (negative = under it)
     "duck_ratio": 3.0,     # how hard the bed dips under speech (sidechain compression)
     "duck_threshold": 0.04,
@@ -944,8 +944,10 @@ def mix_theme(src, man, flash_t, work, name):
     """Lay the series theme (the manifest's "theme" block) under the opening of src's audio.
 
     The theme starts with the video, sits level_lu under the opening's dialogue and dips
-    further whenever someone speaks, then fades out through the teleport: from fade_from
-    seconds before the portal flash to fade_to seconds after it (Brian's spec, Oct 1).
+    further whenever someone speaks, then fades out from the teleport: the fade starts
+    fade_from seconds after the portal flash (0 = on the flash; negative = before it) and the
+    theme is silent fade_to seconds after it (Brian's spec, Oct 6: the fade starts right on
+    the flash and runs about 3 seconds into the new scene).
     Returns (path of the mixed WAV, report dict)."""
     spec = dict(THEME, **man["theme"])
     theme = os.path.join(work, "theme_" + hashlib.sha1(spec["url"].encode()).hexdigest()[:10]
