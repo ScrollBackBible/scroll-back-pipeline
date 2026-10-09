@@ -1,6 +1,8 @@
 {
-  "_about": "Example manifest, copied from Episode 2 with the clip links removed. Copy it to E{n}.json for a new episode, paste each finished clip's URL, and update the title, lines, Shorts hooks and cut points. Real manifests contain private clip links, so they are not kept in this public repo.",
+  "_about": "Example manifest, copied from Episode 2 with the clip links removed. Copy it to E{n}.json for a new episode, paste each finished clip's URL, and update the episode and season numbers, title, lines, Shorts hooks and cut points (seasons are 8 episodes: Episode 9 is season 2, season_episode 1). Real manifests contain private clip links, so they are not kept in this public repo.",
   "episode": 2,
+  "season": 1,
+  "season_episode": 2,
   "title": "WHY DID JESUS\nFLIP THE TABLES?",
   "text_color": "#F6F0E6",
   "loudness": {

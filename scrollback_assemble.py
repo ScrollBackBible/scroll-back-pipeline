@@ -14,6 +14,10 @@ Clip URLs in; one finished 16:9 episode plus the vertical Shorts out.
     python3 scrollback_assemble.py E2.json --tiktok        # TikTok Shorts: end cards point to the full episode on the TikTok page
     python3 scrollback_assemble.py E2.json --put E2F1=<presigned PUT url>   # upload a result when done
 
+Seasons (8 episodes each, decided Oct 9): put "season" and "season_episode" in the manifest
+and the title card, the trailer and the vertical episode's cover read "Season 2 · Episode 1"
+(a new season's first trailer opens on "A new season"). File names keep the running number.
+
 Needs Python 3.8+, ffmpeg and ffprobe. Optional: faster-whisper (word timings for
 captions and far better speech detection in noisy scenes) and numpy (speed).
 The Higgsfield sandbox has all of these preinstalled.
@@ -50,7 +54,7 @@ What it does, in order:
      TikTok and Instagram (E{n}F1V): the episode's own cuts and dissolves,
      captions throughout, the title riding the portal flash in the top band, and
      the episode's end card after the last line. Its first frame is a cover (the picture,
-     EPISODE n and the title above it, FULL EPISODE below, inside the 3:4 area profile
+     EPISODE n (or SEASON s · EPISODE e) and the title above it, FULL EPISODE below, inside the 3:4 area profile
      grids show): TikTok uses the first frame as the cover, so a viewer never sees it but
      the profile grid does. "cover": false turns it off.
   7. If the manifest has a "theme" block, the series theme plays under the cold
@@ -690,6 +694,14 @@ def st_plain(lines, size, gap=8, spec=SHORT_TEXT):
     return [("t", ln, size, 0.0, spec["cream"], gap) for ln in lines]
 
 
+def ep_label(man):
+    """How the episode is named on screen. With "season" and "season_episode" in the manifest
+    (seasons of 8 episodes, decided Oct 9) it reads "Season 2 · Episode 1"; file names keep
+    the running number (E9F1, E9S1 ...). Without them it reads "Episode 9"."""
+    s, e = man.get("season"), man.get("season_episode")
+    return f"Season {s} \u00b7 Episode {e}" if s and e else f"Episode {man['episode']}"
+
+
 def short_block_png(rows, font, W, k, path, outline=0, keep=None, spec=SHORT_TEXT):
     """A centred text block as a full-width RGBA PNG with the soft shadow; returns its height.
     rows: ("t", text, size, tracking, colour, gap_after) or ("r", w, h, colour, gap_after), sizes at 1920 lines.
@@ -872,7 +884,7 @@ def build_cover(sh, man, base, total, flash_t, W, H, font, work, outdir, name, r
         pic_top, pic_bot = int(H * 0.40), int(H * 0.62)
     top_safe, bot_safe = H * (1 - spec["safe"]) / 2, H * (1 + spec["safe"]) / 2
     # the title block above the picture: largest title size that fits the width and the space
-    kicker = spec.get("kicker", f"Episode {man['episode']}")
+    kicker = spec.get("kicker", ep_label(man))
     title = spec.get("title", man.get("title", ""))
     room = pic_top - top_safe - 10 * k
     maxw = W * 0.9
@@ -1198,7 +1210,7 @@ def render_episode(man, cfg, clips, work, outdir, font, draft, report):
         flash_t = starts[portal_idx] + (clips[seg["clip"]]["flash"] - seg["in"])
         t0 = max(0.0, flash_t - ep.get("title_lead", 3.0))
         t1 = flash_t + ep.get("title_hold_after", 0.8)
-        kicker = ep.get("kicker", f"SCROLL BACK  \u00b7  EPISODE {man['episode']}")
+        kicker = ep.get("kicker", "SCROLL BACK  \u00b7  " + ep_label(man).upper())
         png = lower_third_png(kicker, [l.upper() for l in title.split("\n")], font, H,
                               os.path.join(work, f"{name}_title.png"))
         cards.append(png + (t0, t1))
@@ -1374,9 +1386,10 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
     rep["hold"] = hold
 
     if sh.get("kind") == "trailer":
-        tt = dict({"kicker": "A new series", "title": "Scroll Back",
+        first_of_new_season = (man.get("season") or 1) > 1 and man.get("season_episode") == 1
+        tt = dict({"kicker": "A new season" if first_of_new_season else "A new series", "title": "Scroll Back",
                    "pitch": "Two students. One Bible.\nEvery question you were afraid to ask.",
-                   "end_kicker": f"Episode {man['episode']}", "end_title": "Tomorrow",
+                   "end_kicker": ep_label(man), "end_title": "Tomorrow",
                    "end_line": "Subscribe for new episodes"}, **sh.get("trailer_text", {}))
         blk = [st_kicker(tt["kicker"]), st_rule(), st_title(tt["title"])]
         add(blk, hook_y, 0.0, 4.6, keep={0})                              # A NEW SERIES
@@ -1411,7 +1424,9 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
                     if max(text_w(ft, ln, T["title_tracking"]) for ln in lines) <= T["caption_maxw"] * k:
                         break
                     tsz -= 2
-                kicker = ep.get("kicker", f"SCROLL BACK  ·  EPISODE {man['episode']}")
+                # in the 1080-wide Shorts frame "SCROLL BACK · SEASON n · EPISODE m" is too wide; drop the series name there
+                kicker = ep.get("kicker", ep_label(man).upper() if man.get("season") and man.get("season_episode")
+                                else f"SCROLL BACK  ·  EPISODE {man['episode']}")
                 add([st_kicker(kicker, T["card_kicker_size"]), st_rule()] + [st_title(ln, tsz) for ln in lines],
                     hook_y, t0, t1, fade=0.3, rise=T["card_rise_px"])
                 rep["title_window"] = [round(t0, 2), round(t1, 2)]

@@ -7,7 +7,7 @@ every decision; this repo holds the code it describes.
 |---|---|
 | `scrollback_assemble.py` | Clip URLs in. Out: the 16:9 episode (title card, end card, theme music, loudness), the five letterboxed YouTube Shorts (hooks, captions, end cards), the vertical full episode for TikTok and Instagram (`E{n}F1V`, whose first frame is its profile-grid cover), with `--social` the Instagram versions of the Shorts (end cards point to YouTube) and with `--tiktok` the TikTok versions (end cards point to the full episode on the TikTok page). Also runs the script check |
 | `scrollback_thumbnail.py` | Puts the episode thumbnail text on generated art, to the bible's thumbnail spec |
-| `example_manifest.json` | Episode 2's manifest with the clip links removed, including the theme block and the vertical episode - copy it for each new episode |
+| `example_manifest.json` | Episode 2's manifest with the clip links removed, including the theme block and the vertical episode - copy it for each new episode and set `season` and `season_episode` (8 episodes a season; Episode 9 is Season 2, Episode 1), which the title card, trailer and cover show |
 
 ## Running it
 
