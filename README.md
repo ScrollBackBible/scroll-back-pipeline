@@ -29,3 +29,12 @@ The font must be Montserrat ExtraBold (SHA-256 `d3ac6a843d3ba6d5cafd44cf39e43705
 both scripts refuse anything else.
 
 Real manifests (`E2.json`, `E3.json` ...) contain private clip links and are never committed here.
+
+## Hooks
+
+Every Short opens on a hook in the top band (1-3 words, caps, on screen 0-3s). From Episode 4 the
+trailer gets one too: give the trailer a `"hook"` (a short claim or question, up to about 5 words, e.g.
+`"Séance in the Bible?"`) and it opens on that under a SCROLL BACK kicker from the first frame, instead
+of A NEW SERIES building into SCROLL BACK. The pitch, the episode label and TOMORROW follow as before,
+and any of them can still be changed in `trailer_text`. The production bible's "What goes viral" section
+says why: the posts that put the surprise on frame one did best.

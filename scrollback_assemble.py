@@ -43,7 +43,8 @@ What it does, in order:
      default: the whole wide frame at full width, with space above and below
      ("short_fill": "blur" = a darkened blur of the same shot, "black", or a hex
      colour). Text lives in those bands and never covers the picture: the hook
-     (1-3 words, caps) or trailer beats in the top band, captions (only while
+     (1-3 words, caps) or trailer beats in the top band (a trailer with a "hook"
+     opens on it under a SCROLL BACK kicker instead of A NEW SERIES), captions (only while
      someone speaks) and the 3-second end card in the bottom band, clear of the
      Shorts player's own UI. All text follows SHORT_TEXT, the bible's Shorts spec;
      "hold": "auto" freezes the last frame when the last line runs to the clip's end.
@@ -1387,13 +1388,24 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
 
     if sh.get("kind") == "trailer":
         first_of_new_season = (man.get("season") or 1) > 1 and man.get("season_episode") == 1
-        tt = dict({"kicker": "A new season" if first_of_new_season else "A new series", "title": "Scroll Back",
+        # A trailer with a "hook" opens on it (viral study, Oct 11: posts that put the surprise on
+        # frame one won; the trailer that opened on A NEW SERIES was skipped by 67% on Instagram).
+        # The hook is the big title under a SCROLL BACK kicker, on screen from the first frame.
+        hooked = bool(sh.get("hook"))
+        tt = dict({"kicker": "A new season" if first_of_new_season else ("Scroll Back" if hooked else "A new series"),
+                   "title": sh["hook"] if hooked else "Scroll Back",
                    "pitch": "Two students. One Bible.\nEvery question you were afraid to ask.",
                    "end_kicker": ep_label(man), "end_title": "Tomorrow",
                    "end_line": "Subscribe for new episodes"}, **sh.get("trailer_text", {}))
-        blk = [st_kicker(tt["kicker"]), st_rule(), st_title(tt["title"])]
-        add(blk, hook_y, 0.0, 4.6, keep={0})                              # A NEW SERIES
-        add(blk, hook_y, 1.8, 4.6, rise=T["rise_px"], keep={1, 2})        # ... into SCROLL BACK
+        ft = ImageFont.truetype(font, int(round(T["title_size"] * k)))
+        tlines = wrap_px(ft, tt["title"].upper(), T["hook_maxw"] * k, T["title_tracking"])
+        blk = [st_kicker(tt["kicker"]), st_rule()] + [st_title(ln, None, 6 if i < len(tlines) - 1 else 0)
+                                                      for i, ln in enumerate(tlines)]
+        if hooked:
+            add(blk, hook_y, 0.0, 4.6, rise=T["card_rise_px"])                 # SCROLL BACK / THE HOOK
+        else:
+            add(blk, hook_y, 0.0, 4.6, keep={0})                              # A NEW SERIES
+            add(blk, hook_y, 1.8, 4.6, rise=T["rise_px"], keep=set(range(1, len(blk))))  # ... into SCROLL BACK
         fp = ImageFont.truetype(font, int(round(T["pitch_size"] * k)))
         add(st_plain(wrap_px(fp, tt["pitch"], T["pitch_maxw"] * k), T["pitch_size"]), hook_y, 5.0, 9.5)
         fl = ImageFont.truetype(font, int(round(T["line_size"] * k)))

@@ -106,7 +106,7 @@
       "name": "E2S1",
       "_title": "Jesus made a whip",
       "kind": "trailer",
-      "_note": "Posts Tue Oct 6, the day before the episode. All of scene 1, ending on the portal flash (trimming to 18s would cut Ollie's opening line). No captions. Text beats are built in (A NEW SERIES into SCROLL BACK, the pitch at 5s, then EPISODE n / TOMORROW / Subscribe over the last 4s); override any of them in trailer_text.",
+      "_note": "Posts Tue Oct 6, the day before the episode. All of scene 1, ending on the portal flash (trimming to 18s would cut Ollie's opening line). No captions. Text beats are built in (A NEW SERIES into SCROLL BACK, the pitch at 5s, then EPISODE n / TOMORROW / Subscribe over the last 4s); override any of them in trailer_text. From Episode 4, add a hook (e.g. \"hook\": \"Séance in the Bible?\") and the trailer opens on it under a SCROLL BACK kicker instead of A NEW SERIES.",
       "segments": [
         {
           "clip": "S1"
