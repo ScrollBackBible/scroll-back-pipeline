@@ -44,7 +44,8 @@ What it does, in order:
      ("short_fill": "blur" = a darkened blur of the same shot, "black", or a hex
      colour). Text lives in those bands and never covers the picture: the hook
      (1-3 words, caps) or trailer beats in the top band (a trailer with a "hook"
-     opens on it under a SCROLL BACK kicker instead of A NEW SERIES), captions (only while
+     opens on it under a SCROLL BACK kicker instead of A NEW SERIES; a Short with a "part",
+     e.g. "Part 1 of 5", shows it as a gold kicker over the hook), captions (only while
      someone speaks) and the 3-second end card in the bottom band, clear of the
      Shorts player's own UI. All text follows SHORT_TEXT, the bible's Shorts spec;
      "hold": "auto" freezes the last frame when the last line runs to the clip's end.
@@ -813,7 +814,11 @@ def social_versions(shorts, man, base=SOCIAL, key="social"):
     """The Shorts again for another platform: same cuts and text, but the end card and the
     trailer's last line point where that platform's viewers should go (Instagram: YouTube;
     TikTok: the full episode on the TikTok page). The vertical full episode is already made for them.
-    The manifest's "social" or "tiktok" block overrides any of the defaults."""
+    The manifest's "social" or "tiktok" block overrides any of the defaults.
+    Series Shorts (Brian, Oct 15): a Short's "part" label ("Part 1 of 5") shows on the YouTube and
+    Instagram versions; TikTok posts only two of the Shorts, so its versions drop the label unless
+    the Short sets "tiktok_part". A Short's "social_end_card" or "tiktok_end_card" replaces that
+    version's end card (Instagram's Parts 1-4 say "Follow for part 2 / Scroll Back")."""
     soc = dict(base, **man.get(key, {}))
     out = []
     for s in shorts:
@@ -821,10 +826,14 @@ def social_versions(shorts, man, base=SOCIAL, key="social"):
             continue
         t = json.loads(json.dumps(s))
         t["name"] = s["name"] + soc["suffix"]
+        if key == "tiktok":
+            t.pop("part", None)
+            if s.get("tiktok_part"):
+                t["part"] = s["tiktok_part"]
         if s.get("kind") == "trailer":
             t["trailer_text"] = dict(s.get("trailer_text", {}), end_line=soc["trailer_end_line"])
         else:
-            t["end_card"] = soc["end_card"]
+            t["end_card"] = s.get(key + "_end_card") or soc["end_card"]
         out.append(t)
     return out
 
@@ -1413,14 +1422,18 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
                + st_plain(wrap_px(fl, tt["end_line"], T["pitch_maxw"] * k), T["line_size"]))
         add(end, hook_y, max(0.0, total - 4.0), total + 1.0, rise=T["rise_px"])   # holds through the flash
     else:
-        if sh.get("hook"):   # 1-3 words, all caps, letter-spaced like the title card
-            hook = sh["hook"].upper()
-            if len(hook.split()) > 3:
-                report.setdefault("warnings", []).append(f"{name}: hook is {len(hook.split())} words; the spec is 1-3")
-            fh = ImageFont.truetype(font, int(round(T["hook_size"] * k)))
-            add([("t", ln, T["hook_size"], T["hook_tracking"], T["cream"], 10)
-                 for ln in wrap_px(fh, hook, T["hook_maxw"] * k, T["hook_tracking"])],
-                hook_y, 0.0, sh.get("hook_until", T["hook_secs"]), rise=T["card_rise_px"])
+        if sh.get("hook") or sh.get("part"):
+            rows = []
+            if sh.get("part"):   # series label (Brian, Oct 15): "PART 1 OF 5" in gold over the hook
+                rows += [st_kicker(sh["part"]), st_rule()]
+            if sh.get("hook"):   # 1-3 words, all caps, letter-spaced like the title card
+                hook = sh["hook"].upper()
+                if len(hook.split()) > 3:
+                    report.setdefault("warnings", []).append(f"{name}: hook is {len(hook.split())} words; the spec is 1-3")
+                fh = ImageFont.truetype(font, int(round(T["hook_size"] * k)))
+                rows += [("t", ln, T["hook_size"], T["hook_tracking"], T["cream"], 10)
+                         for ln in wrap_px(fh, hook, T["hook_maxw"] * k, T["hook_tracking"])]
+            add(rows, hook_y, 0.0, sh.get("hook_until", T["hook_secs"]), rise=T["card_rise_px"])
         card_s = total - card_secs
         if kind == "episode" and man.get("title"):
             # the title-card block rides the portal flash, as in the 16:9 episode, but in the top band

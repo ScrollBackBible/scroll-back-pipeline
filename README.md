@@ -38,3 +38,9 @@ trailer gets one too: give the trailer a `"hook"` (a short claim or question, up
 of A NEW SERIES building into SCROLL BACK. The pitch, the episode label and TOMORROW follow as before,
 and any of them can still be changed in `trailer_text`. The production bible's "What goes viral" section
 says why: the posts that put the surprise on frame one did best.
+
+Series Shorts (Oct 15): give a Short `"part": "Part 1 of 5"` and the label sits in gold over its hook,
+on the YouTube and Instagram versions (TikTok posts only two of the Shorts, so `--tiktok` drops the
+label unless the Short sets `"tiktok_part"`). `"social_end_card"` and `"tiktok_end_card"` replace that
+version's end card for one Short, e.g. `["Follow for part 2", "Scroll Back"]` on Instagram's Parts 1 to 4,
+while the last part keeps the usual "Full episode on YouTube".
