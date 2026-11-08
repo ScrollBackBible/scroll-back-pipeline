@@ -50,7 +50,7 @@ What it does, in order:
      Shorts player's own UI (a last line still spoken when the card comes in keeps its
      caption; the card then moves to the top band). All text follows SHORT_TEXT, the
      bible's Shorts spec. Captions are white with one gold word per line (CAPTION;
-     "caption_style" "A" = thick black outline + soft shadow, "B"/"D" = faded dark band, "C" = soft drop shadow only;
+     "caption_style" default "C" = no outline, soft drop shadow (Brian, Nov 8; A/B/D retired);
      "caption_gold" = preferred gold words). Content Shorts never freeze the last frame
      (Nov 3); "hold": "auto" still freezes it for the vertical episode's end card.
      "short_zoom" > 1 enlarges the picture and trims the sides (crop_x steers it);
@@ -710,12 +710,14 @@ def ep_label(man):
 
 # ----------------------------------------------------------------------------
 # Dialogue captions (Brian, Nov 8): white Montserrat ExtraBold with ONE gold emphasis word per
-# caption line (the title-card gold), on either
+# caption line (the title-card gold). STANDARD (Brian's pick, Nov 8): style "C", no outline and no
+# band, a soft diffuse drop shadow, with a wider, stronger shadow under the gold word so it holds on
+# bright frames. A, B and D are retired (kept only to re-render old files). The styles were
 #   style "A": a thick black outline + soft shadow (current default), or
 #   style "B": a soft faded dark band behind the words (~45% black, rounded, padded), no outline,
 #   style "C": no outline, only a soft diffuse drop shadow (~47% black, blurred, 3px down), or
 #   style "D": the same as B (no outline, faded band), named for Brian's Nov 8 C/D comparison.
-# Manifest: "caption_style": "A" | "B" (a Short's own "caption_style" wins);
+# Manifest: "caption_style": "C" (default) | "A" | "B" | "D" (a Short's own "caption_style" wins);
 #   "caption_gold": ["Zacchaeus", "grumbled", ...] words or phrases to prefer as the gold word
 #   (a Short's own list is tried first); "caption_gold": false turns the gold word off.
 # Without a listed word the gold word is picked automatically: the word carrying a ! or ?!,
@@ -726,7 +728,8 @@ CAPTION = {
     "white": (255, 255, 255, 255), "gold": (232, 182, 92, 255),
     "A": {"outline": 7, "ink": (0, 0, 0, 255), "shadow_alpha": 170, "shadow_blur": 10, "shadow_dy": 5},
     "B": {"band": (0, 0, 0, 115), "pad_x": 30, "pad_y": 16, "radius": 24, "soften": 3, "line_gap": 4},
-    "C": {"outline": 0, "shadow_alpha": 120, "shadow_blur": 9, "shadow_dy": 3},     # no outline, soft drop shadow only
+    "C": {"outline": 0, "shadow_alpha": 120, "shadow_blur": 9, "shadow_dy": 3,      # no outline, soft drop shadow only
+          "gold_shadow_alpha": 200, "gold_shadow_blur": 14, "gold_shadow_grow": 3},  # the gold word gets a wider, stronger shadow
     "D": {"band": (0, 0, 0, 115), "pad_x": 30, "pad_y": 16, "radius": 24, "soften": 3, "line_gap": 4},  # = B: no outline, faded band
     "line_gap": 4,
 }
@@ -767,7 +770,7 @@ def caption_gold_index(tokens, prefer=None):
     return (long_ or content)[-1]   # lines tend to land on their key word
 
 
-def caption_png(rows, gold, font, W, k, path, style="A", size=None, spec=CAPTION, T=SHORT_TEXT):
+def caption_png(rows, gold, font, W, k, path, style="C", size=None, spec=CAPTION, T=SHORT_TEXT):
     """One dialogue caption as a full-width RGBA PNG; returns its height.
     rows: list of token lists (already wrapped); gold: (row, token) or None."""
     from PIL import Image, ImageDraw, ImageFont, ImageFilter
@@ -793,6 +796,8 @@ def caption_png(rows, gold, font, W, k, path, style="A", size=None, spec=CAPTION
         out.alpha_composite(panel.filter(ImageFilter.GaussianBlur(st["soften"] * k)))
     fg = Image.new("RGBA", (W, hc), (0, 0, 0, 0))
     d = ImageDraw.Draw(fg)
+    gfg = Image.new("L", (W, hc), 0)   # the gold word alone, for its extra shadow
+    gd = ImageDraw.Draw(gfg)
     ink = dict(stroke_width=ow, stroke_fill=st["ink"]) if ow else {}
     y = top
     for ri, (r, w) in enumerate(zip(rows, widths)):
@@ -800,6 +805,8 @@ def caption_png(rows, gold, font, W, k, path, style="A", size=None, spec=CAPTION
         for ti, t in enumerate(r):
             col = spec["gold"] if gold == (ri, ti) else spec["white"]
             d.text((x, y), t, font=f, fill=col, **ink)
+            if gold == (ri, ti) and st.get("gold_shadow_alpha"):
+                gd.text((x, y), t, font=f, fill=255, stroke_width=int(round(st.get("gold_shadow_grow", 0) * k)), stroke_fill=255)
             x += f.getlength(t) + sw
         y += lh
     if not band:
@@ -807,6 +814,11 @@ def caption_png(rows, gold, font, W, k, path, style="A", size=None, spec=CAPTION
         sh.putalpha(fg.split()[3].point(lambda v: v * st["shadow_alpha"] // 255))
         sh = sh.filter(ImageFilter.GaussianBlur(st["shadow_blur"] * k))
         out.alpha_composite(sh, (0, int(round(st["shadow_dy"] * k))))
+        if st.get("gold_shadow_alpha") and gold is not None:
+            gs = Image.new("RGBA", (W, hc), (0, 0, 0, 0))
+            gs.putalpha(gfg.point(lambda v: v * st["gold_shadow_alpha"] // 255).filter(
+                ImageFilter.GaussianBlur(st["gold_shadow_blur"] * k)))
+            out.alpha_composite(gs, (0, int(round(st["shadow_dy"] * k))))
     out.alpha_composite(fg)
     out.save(path)
     return hc
@@ -1757,7 +1769,7 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
                 + [st_title(ln, T["card_title_size"], 6 if i < len(tl) - 1 else 0) for i, ln in enumerate(tl)],
                 card_y, card_s, total - 0.05, fade=0.3, rise=T["card_rise_px"])
         fc = ImageFont.truetype(font, int(round(T["caption_size"] * k)))
-        cap_style = str(sh.get("caption_style", man.get("caption_style", "A"))).upper()
+        cap_style = str(sh.get("caption_style", man.get("caption_style", "C"))).upper()
         cg_sh, cg_man = sh.get("caption_gold"), man.get("caption_gold")
         cap_prefer = False if (cg_sh is False or (cg_sh is None and cg_man is False)) else (
             list(cg_sh or []) + list(cg_man or []))
