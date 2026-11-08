@@ -732,7 +732,9 @@ into onto over under up down out off as is are was were be been being am do does
 i me my mine you your yours he him his she her it its we us our they them their who whom what which
 there here not no yes just very really too also only even still now well oh okay ok wait let lets let's
 can can't could would should will won't don't didn't isn't wasn't aren't it's that's he's she's i'm you're
-we're they're go going get got say says said says know see look like one some all any more most much""".split())
+we're they're go going get got say says said says know see look like one some all any more most much
+because how why when where about through never always before after again every many same other another
+thing things way part guess ask below right back first next""".split())
 
 
 def caption_gold_index(tokens, prefer=None):
@@ -757,7 +759,8 @@ def caption_gold_index(tokens, prefer=None):
     for i in content:
         if re.search(r"\d", tokens[i]):
             return i
-    return max(content, key=lambda i: (len(norm[i]), i))
+    long_ = [i for i in content if len(norm[i]) >= 4]
+    return (long_ or content)[-1]   # lines tend to land on their key word
 
 
 def caption_png(rows, gold, font, W, k, path, style="A", size=None, spec=CAPTION, T=SHORT_TEXT):
