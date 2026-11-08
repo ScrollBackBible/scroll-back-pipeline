@@ -50,7 +50,7 @@ What it does, in order:
      Shorts player's own UI (a last line still spoken when the card comes in keeps its
      caption; the card then moves to the top band). All text follows SHORT_TEXT, the
      bible's Shorts spec. Captions are white with one gold word per line (CAPTION;
-     "caption_style" "A" = thick black outline + soft shadow, "B" = faded dark band;
+     "caption_style" "A" = thick black outline + soft shadow, "B"/"D" = faded dark band, "C" = soft drop shadow only;
      "caption_gold" = preferred gold words). Content Shorts never freeze the last frame
      (Nov 3); "hold": "auto" still freezes it for the vertical episode's end card.
      "short_zoom" > 1 enlarges the picture and trims the sides (crop_x steers it);
@@ -712,7 +712,9 @@ def ep_label(man):
 # Dialogue captions (Brian, Nov 8): white Montserrat ExtraBold with ONE gold emphasis word per
 # caption line (the title-card gold), on either
 #   style "A": a thick black outline + soft shadow (current default), or
-#   style "B": a soft faded dark band behind the words (~45% black, rounded, padded).
+#   style "B": a soft faded dark band behind the words (~45% black, rounded, padded), no outline,
+#   style "C": no outline, only a soft diffuse drop shadow (~47% black, blurred, 3px down), or
+#   style "D": the same as B (no outline, faded band), named for Brian's Nov 8 C/D comparison.
 # Manifest: "caption_style": "A" | "B" (a Short's own "caption_style" wins);
 #   "caption_gold": ["Zacchaeus", "grumbled", ...] words or phrases to prefer as the gold word
 #   (a Short's own list is tried first); "caption_gold": false turns the gold word off.
@@ -724,6 +726,8 @@ CAPTION = {
     "white": (255, 255, 255, 255), "gold": (232, 182, 92, 255),
     "A": {"outline": 7, "ink": (0, 0, 0, 255), "shadow_alpha": 170, "shadow_blur": 10, "shadow_dy": 5},
     "B": {"band": (0, 0, 0, 115), "pad_x": 30, "pad_y": 16, "radius": 24, "soften": 3, "line_gap": 4},
+    "C": {"outline": 0, "shadow_alpha": 120, "shadow_blur": 9, "shadow_dy": 3},     # no outline, soft drop shadow only
+    "D": {"band": (0, 0, 0, 115), "pad_x": 30, "pad_y": 16, "radius": 24, "soften": 3, "line_gap": 4},  # = B: no outline, faded band
     "line_gap": 4,
 }
 
