@@ -1559,8 +1559,12 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
             report.setdefault("warnings", []).append(f"{name}: no word timings (install faster-whisper); captions skipped")
     card = None if kind == "trailer" else sh.get("end_card", ["Full episode on the channel", "Scroll Back"])
     card_secs = (float((ep.get("end_card") or {}).get("seconds", T["card_secs"])) if kind == "episode"
-                 else T["card_secs"]) if card else 0.0
+                 else T.get("short_card_secs", 2.0)) if card else 0.0
     hold = sh.get("hold", 0.0)
+    if hold == "auto" and kind != "episode":
+        # Nov 3 clean layout (Brian): no frozen last frame on content Shorts; the end card may
+        # overlap the last 0.5s of speech instead
+        hold = 0.0
     if hold == "auto":
         # freeze the last frame just long enough for the end card to come after the last word
         hold = max(0.0, (cap_words[-1][1] if cap_words else 0.0) + 0.17 + card_secs - total) if card else 0.0
@@ -1683,6 +1687,20 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
             layers.append((png, hook_y - ph / 2.0, o0, o1, SCRIPTURE["fade"], 0.0))
             placed.append([round(o0, 2), round(o1, 2)])
         rep["scripture"] = placed
+    if kind not in ("trailer", "episode") and sh.get("cta", True) and total >= 9.0:
+        # Nov 3 clean layout: a gold LIKE · COMMENT · SUBSCRIBE line pops up once mid-Short in the top band,
+        # in a gap with no hook, title or Scripture card, ending before the end card
+        busy = [(0.0, float(sh.get("hook_until", T["hook_secs"])) + 0.2)] + [(a - 0.2, b + 0.2) for a, b in (rep.get("scripture") or [])]
+        end_lim = (total - card_secs - 0.1) if card else total - 0.1
+        t, dur, placed_cta = max(3.2, 0.45 * total), 2.8, None
+        while t + dur <= end_lim:
+            if not any(t < b1 and t + dur > b0 for b0, b1 in busy):
+                placed_cta = t
+                break
+            t += 0.25
+        if placed_cta is not None:
+            add([st_kicker("LIKE  \u00b7  COMMENT  \u00b7  SUBSCRIBE", 36)], hook_y, placed_cta, placed_cta + dur, fade=0.3)
+            rep["cta"] = [round(placed_cta, 2), round(placed_cta + dur, 2)]
     ins = ["-i", base]
     # Each text layer is fed only around its own window (Oct 18): looping every PNG for the whole
     # video made the vertical episode (hundreds of caption layers) take ~20 min; this takes ~3.
