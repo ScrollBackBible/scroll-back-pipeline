@@ -46,9 +46,13 @@ What it does, in order:
      (1-3 words, caps) or trailer beats in the top band (a trailer with a "hook"
      opens on it under a SCROLL BACK kicker instead of A NEW SERIES; a Short with a "part",
      e.g. "Part 1 of 5", shows it as a gold kicker over the hook), captions (only while
-     someone speaks) and the 3-second end card in the bottom band, clear of the
-     Shorts player's own UI. All text follows SHORT_TEXT, the bible's Shorts spec;
-     "hold": "auto" freezes the last frame when the last line runs to the clip's end.
+     someone speaks) and the 2-second end card in the bottom band, clear of the
+     Shorts player's own UI (a last line still spoken when the card comes in keeps its
+     caption; the card then moves to the top band). All text follows SHORT_TEXT, the
+     bible's Shorts spec. Captions are white with one gold word per line (CAPTION;
+     "caption_style" "A" = thick black outline + soft shadow, "B" = faded dark band;
+     "caption_gold" = preferred gold words). Content Shorts never freeze the last frame
+     (Nov 3); "hold": "auto" still freezes it for the vertical episode's end card.
      "short_zoom" > 1 enlarges the picture and trims the sides (crop_x steers it);
      "short_frame": "crop" switches to a full-height 9:16 cut-out instead.
      Vertical footage (Episode 1 style) fills the screen as before.
@@ -702,6 +706,103 @@ def ep_label(man):
     the running number (E9F1, E9S1 ...). Without them it reads "Episode 9"."""
     s, e = man.get("season"), man.get("season_episode")
     return f"Season {s} \u00b7 Episode {e}" if s and e else f"Episode {man['episode']}"
+
+
+# ----------------------------------------------------------------------------
+# Dialogue captions (Brian, Nov 8): white Montserrat ExtraBold with ONE gold emphasis word per
+# caption line (the title-card gold), on either
+#   style "A": a thick black outline + soft shadow (current default), or
+#   style "B": a soft faded dark band behind the words (~45% black, rounded, padded).
+# Manifest: "caption_style": "A" | "B" (a Short's own "caption_style" wins);
+#   "caption_gold": ["Zacchaeus", "grumbled", ...] words or phrases to prefer as the gold word
+#   (a Short's own list is tried first); "caption_gold": false turns the gold word off.
+# Without a listed word the gold word is picked automatically: the word carrying a ! or ?!,
+# then a name (capitalised mid-line), then a number, then the longest word that is not a filler.
+# ----------------------------------------------------------------------------
+
+CAPTION = {
+    "white": (255, 255, 255, 255), "gold": (232, 182, 92, 255),
+    "A": {"outline": 7, "ink": (0, 0, 0, 255), "shadow_alpha": 170, "shadow_blur": 10, "shadow_dy": 5},
+    "B": {"band": (0, 0, 0, 115), "pad_x": 30, "pad_y": 16, "radius": 24, "soften": 3, "line_gap": 4},
+    "line_gap": 4,
+}
+
+CAPTION_STOP = set("""a an the and or but so if then than that this these those to of in on at by for with from
+into onto over under up down out off as is are was were be been being am do does did done have has had
+i me my mine you your yours he him his she her it its we us our they them their who whom what which
+there here not no yes just very really too also only even still now well oh okay ok wait let lets let's
+can can't could would should will won't don't didn't isn't wasn't aren't it's that's he's she's i'm you're
+we're they're go going get got say says said says know see look like one some all any more most much""".split())
+
+
+def caption_gold_index(tokens, prefer=None):
+    """Index of the one gold word in a caption line (None = no gold word)."""
+    norm = [norm_tok(t) for t in tokens]
+    if prefer is False:
+        return None
+    for ph in prefer or []:
+        pt = [norm_tok(t) for t in str(ph).split() if norm_tok(t)]
+        for i in range(len(norm) - len(pt) + 1):
+            if pt and norm[i:i + len(pt)] == pt:
+                return i + len(pt) - 1 if len(pt) > 1 else i
+    content = [i for i, n in enumerate(norm) if n and n not in CAPTION_STOP]
+    if not content:
+        return None
+    for i in content:                       # the surprise word: "four times?!", "small!"
+        if re.search(r"[!]|\?!", tokens[i]):
+            return i
+    for i in content:                       # a name in the middle of the line
+        if i > 0 and tokens[i][:1].isupper() and norm[i] != "i":
+            return i
+    for i in content:
+        if re.search(r"\d", tokens[i]):
+            return i
+    return max(content, key=lambda i: (len(norm[i]), i))
+
+
+def caption_png(rows, gold, font, W, k, path, style="A", size=None, spec=CAPTION, T=SHORT_TEXT):
+    """One dialogue caption as a full-width RGBA PNG; returns its height.
+    rows: list of token lists (already wrapped); gold: (row, token) or None."""
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter
+    st = spec.get(str(style).upper(), spec["A"])
+    band = "band" in st
+    f = ImageFont.truetype(font, max(1, int(round((size or T["caption_size"]) * k))))
+    sw = f.getlength(" ")
+    asc, desc = f.getmetrics()
+    lh = asc + desc + spec["line_gap"] * k
+    widths = [sum(f.getlength(t) for t in r) + sw * (len(r) - 1) for r in rows]
+    pad = int(round((40 if not band else 24) * k))
+    ow = int(round(st.get("outline", 0) * k))
+    th = len(rows) * lh - spec["line_gap"] * k
+    hc = int(th + 2 * pad + 2 * ow + (st.get("pad_y", 0) * 2 * k))
+    top = (hc - th) / 2.0
+    out = Image.new("RGBA", (W, hc), (0, 0, 0, 0))
+    if band:
+        bw = max(widths) + 2 * st["pad_x"] * k
+        bh = th + 2 * st["pad_y"] * k
+        x0, y0 = (W - bw) / 2.0, top - st["pad_y"] * k
+        panel = Image.new("RGBA", (W, hc), (0, 0, 0, 0))
+        ImageDraw.Draw(panel).rounded_rectangle([x0, y0, x0 + bw, y0 + bh], radius=int(st["radius"] * k), fill=st["band"])
+        out.alpha_composite(panel.filter(ImageFilter.GaussianBlur(st["soften"] * k)))
+    fg = Image.new("RGBA", (W, hc), (0, 0, 0, 0))
+    d = ImageDraw.Draw(fg)
+    ink = dict(stroke_width=ow, stroke_fill=st["ink"]) if ow else {}
+    y = top
+    for ri, (r, w) in enumerate(zip(rows, widths)):
+        x = (W - w) / 2.0
+        for ti, t in enumerate(r):
+            col = spec["gold"] if gold == (ri, ti) else spec["white"]
+            d.text((x, y), t, font=f, fill=col, **ink)
+            x += f.getlength(t) + sw
+        y += lh
+    if not band:
+        sh = Image.new("RGBA", (W, hc), (0, 0, 0, 0))
+        sh.putalpha(fg.split()[3].point(lambda v: v * st["shadow_alpha"] // 255))
+        sh = sh.filter(ImageFilter.GaussianBlur(st["shadow_blur"] * k))
+        out.alpha_composite(sh, (0, int(round(st["shadow_dy"] * k))))
+    out.alpha_composite(fg)
+    out.save(path)
+    return hc
 
 
 def short_block_png(rows, font, W, k, path, outline=0, keep=None, spec=SHORT_TEXT):
@@ -1612,6 +1713,13 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
                          for ln in wrap_px(fh, hook, T["hook_maxw"] * k, T["hook_tracking"])]
             add(rows, hook_y, 0.0, sh.get("hook_until", T["hook_secs"]), rise=T["card_rise_px"])
         card_s = total - card_secs
+        # Nov 8 (Brian): a last line still being spoken when the end card comes in kept no caption
+        # ("Luke says they all grumbled"). Then the card goes to the top band and the captions run on.
+        late = bool(card) and kind != "episode" and bool(cap_words) and cap_words[-1][1] > card_s + 0.05
+        cap_lim = (total - 0.05) if late else card_s - 0.05
+        if late:
+            card_y = hook_y
+            rep["end_card_top"] = True
         if kind == "episode" and man.get("title"):
             # the title-card block rides the portal flash, as in the 16:9 episode, but in the top band
             pi = next((i for i, s in enumerate(segs) if s["portal"]), None)
@@ -1636,9 +1744,17 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
                 report.setdefault("warnings", []).append(f"{name}: no portal flash found, so the title was not placed")
         if card:
             kick, *rest = card if len(card) > 1 else ["", card[0]]
-            add([st_kicker(kick, T["card_kicker_size"]), st_rule()] + [st_title(r, T["card_title_size"]) for r in rest],
+            fct = ImageFont.truetype(font, int(round(T["card_title_size"] * k)))
+            tl = [ln for r in rest for ln in wrap_px(fct, r.upper(), T["caption_maxw"] * k, T["title_tracking"])]
+            add([st_kicker(kick, T["card_kicker_size"]), st_rule()]
+                + [st_title(ln, T["card_title_size"], 6 if i < len(tl) - 1 else 0) for i, ln in enumerate(tl)],
                 card_y, card_s, total - 0.05, fade=0.3, rise=T["card_rise_px"])
         fc = ImageFont.truetype(font, int(round(T["caption_size"] * k)))
+        cap_style = str(sh.get("caption_style", man.get("caption_style", "A"))).upper()
+        cg_sh, cg_man = sh.get("caption_gold"), man.get("caption_gold")
+        cap_prefer = False if (cg_sh is False or (cg_sh is None and cg_man is False)) else (
+            list(cg_sh or []) + list(cg_man or []))
+        rep["caption_style"] = cap_style
         chunks = caption_chunks(cap_words, fc.getlength, T["caption_maxw"] * k)
         # A quickly spoken chunk ("He didn't", "Nope.") used to be dropped when it had less than
         # 0.2s on screen, so the captions skipped script words. Now it joins the next chunk when
@@ -1657,12 +1773,21 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
         for j, (a, b, text) in enumerate(chunks):
             if j and a < caps[-1][1] + 0.03:
                 a = caps[-1][1] + 0.03  # the chunk before was stretched to stay readable
-            b2 = min(b + 0.12, chunks[j + 1][0] - 0.03 if j + 1 < len(chunks) else 1e9, card_s - 0.05)
-            b2 = max(b2, min(a + 0.25, card_s - 0.05))
+            b2 = min(b + 0.12, chunks[j + 1][0] - 0.03 if j + 1 < len(chunks) else 1e9, cap_lim)
+            b2 = max(b2, min(a + 0.25, cap_lim))
             if b2 - a < 0.05:
                 continue  # only possible right against the end card
-            add(st_plain(wrap_px(fc, text, T["caption_maxw"] * k), T["caption_size"], 4), cap_y,
-                max(0.0, a), b2, fade=0.05, outline=T["caption_outline"])
+            toks = text.split()
+            gi = caption_gold_index(toks, cap_prefer)
+            rows_ = [ln.split() for ln in wrap_px(fc, text, T["caption_maxw"] * k)]
+            gold, n0 = None, 0
+            for ri, r in enumerate(rows_):
+                if gi is not None and n0 <= gi < n0 + len(r):
+                    gold = (ri, gi - n0)
+                n0 += len(r)
+            p = os.path.join(work, f"{name}_t{len(layers) + 1:02d}.png")
+            hc = caption_png(rows_, gold, font, W, k, p, cap_style)
+            layers.append((p, cap_y - hc / 2.0, max(0.0, a), b2, 0.05, 0.0))
             caps.append([round(max(0.0, a), 2), round(b2, 2), text])
         rep["captions"] = caps
 
