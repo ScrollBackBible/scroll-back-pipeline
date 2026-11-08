@@ -1184,6 +1184,153 @@ def caption_chunks(words, fit, maxw, max_gap=0.8):
 # Outputs
 # ----------------------------------------------------------------------------
 
+# ----------------------------------------------------------------------------
+# Scripture on screen (Brian, Oct 19): every quoted verse appears as a card,
+# white words with the emphasised ones in gold, the reference in gold below.
+# Manifest: "scripture": [{"clip": "S2", "text": "Holy, holy, holy is the LORD of hosts;
+#   the whole earth is full of his glory!", "gold": ["Holy, holy, holy", "glory"],
+#   "ref": "Isaiah 6:3", "match": optional words to find in the take (default: text),
+#   "anchor": true when the verse is shown but not spoken (then "hold" seconds, default 5)}]
+# The card starts as the words are spoken and stays long enough to read.
+# 16:9 episode: centred in the lower part of the frame. Shorts and the vertical
+# episode: in the top band, clear of the hook and the title. Trailers: none.
+# ----------------------------------------------------------------------------
+
+SCRIPTURE = {
+    "white": (255, 255, 255, 255), "gold": (232, 182, 92, 255), "box": None, "outline": 3,   # no panel (Brian, Oct 19): outline + shadow
+    "ep_size": 44, "ep_ref": 22, "ep_maxw": 1240, "ep_centre_y": 0.80,     # px at 1080 lines
+    "sh_size": 54, "sh_ref": 30, "sh_maxw": 900,                          # px at 1920 lines
+    "ref_tracking": 0.30, "pad": 34, "line_gap": 10, "ref_gap": 16,
+    "lead": 0.25, "after": 1.0, "per_word": 0.30, "min_secs": 2.2, "fade": 0.35,
+}
+
+
+def _gold_marks(tokens, phrases):
+    norm = [norm_tok(t) for t in tokens]
+    marks = [False] * len(tokens)
+    for ph in phrases or []:
+        pt = [norm_tok(t) for t in ph.split() if norm_tok(t)]
+        if not pt:
+            continue
+        for i in range(len(norm) - len(pt) + 1):
+            if norm[i:i + len(pt)] == pt:
+                for j in range(i, i + len(pt)):
+                    marks[j] = True
+    return marks
+
+
+def scripture_png(sp, font, k, size, ref_size, maxw, path, canvas_w=None, spec=SCRIPTURE):
+    """The verse card as an RGBA PNG: a soft dark panel, the verse in white with the
+    gold words, the reference in gold, letter-spaced. canvas_w = full-width canvas
+    (Shorts) with the panel centred; None = a tight PNG (16:9 episode)."""
+    from PIL import Image, ImageDraw, ImageFont, ImageFilter
+    f = ImageFont.truetype(font, max(1, int(round(size * k))))
+    fr = ImageFont.truetype(font, max(1, int(round(ref_size * k))))
+    tokens = sp["text"].split()
+    marks = _gold_marks(tokens, sp.get("gold"))
+    tokens = list(tokens)
+    tokens[0] = "“" + tokens[0]
+    tokens[-1] = tokens[-1] + "”"
+    sw = f.getlength(" ")
+    lines, cur, cw = [], [], 0.0
+    for t, m in zip(tokens, marks):
+        w = f.getlength(t)
+        if cur and cw + sw + w > maxw * k:
+            lines.append(cur)
+            cur, cw = [], 0.0
+        cw = cw + (sw if cur else 0) + w
+        cur.append((t, m, w))
+    if cur:
+        lines.append(cur)
+    asc, desc = f.getmetrics()
+    lh = asc + desc + spec["line_gap"] * k
+    ref = sp.get("ref", "").upper()
+    tr = fr.size * spec["ref_tracking"]
+    ref_w = fr.getlength(ref) + tr * max(0, len(ref) - 1) if ref else 0
+    ra, rd = fr.getmetrics()
+    widths = [sum(w for _, _, w in ln) + sw * (len(ln) - 1) for ln in lines]
+    pad = spec["pad"] * k
+    bw = int(max(widths + [ref_w]) + 2 * pad)
+    bh = int(len(lines) * lh - spec["line_gap"] * k + (spec["ref_gap"] * k + ra + rd if ref else 0) + 2 * pad)
+    W = canvas_w or bw + int(40 * k)
+    H = bh + int(40 * k)
+    x0, y0 = (W - bw) / 2.0, (H - bh) / 2.0
+    panel = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    if spec.get("box"):
+        ImageDraw.Draw(panel).rounded_rectangle([x0, y0, x0 + bw, y0 + bh], radius=int(22 * k), fill=spec["box"])
+        panel = panel.filter(ImageFilter.GaussianBlur(4 * k))
+    ow = max(2, int(round(spec.get("outline", 0) * k)))
+    ink = dict(stroke_width=ow, stroke_fill=(0, 0, 0, 205)) if spec.get("outline") else {}
+    fg = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(fg)
+    y = y0 + pad
+    for ln, lw in zip(lines, widths):
+        x = (W - lw) / 2.0
+        for t, m, w in ln:
+            d.text((x, y), t, font=f, fill=spec["gold"] if m else spec["white"], **ink)
+            x += w + sw
+        y += lh
+    if ref:
+        y += spec["ref_gap"] * k - spec["line_gap"] * k
+        x = (W - ref_w) / 2.0
+        for j, ch in enumerate(ref):
+            d.text((x + fr.getlength(ref[:j]) + j * tr, y), ch, font=fr, fill=spec["gold"], **ink)
+    sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    sh.putalpha(fg.split()[3].point(lambda v: v * 170 // 255))
+    sh = sh.filter(ImageFilter.GaussianBlur(6 * k))
+    out = panel
+    out.alpha_composite(sh, (0, int(round(3 * k))))
+    out.alpha_composite(fg)
+    out.save(path)
+    return path, W, H
+
+
+def scripture_events(man, segs, starts, clips, report=None, spec=SCRIPTURE):
+    """[(out_start, out_end, spec)] for every manifest scripture entry that falls inside one
+    of these segments, timed from the take's own word timings."""
+    out = []
+    for sp in man.get("scripture", []):
+        for i, sg in enumerate(segs):
+            if sg["clip"] != sp["clip"]:
+                continue
+            c = clips[sg["clip"]]
+            words = [(a, b, norm_tok(w)) for a, b, w in (c.get("words") or []) if norm_tok(w)]
+            pat = [norm_tok(t) for t in (sp.get("match") or sp["text"]).split() if norm_tok(t)]
+            if not words or not pat:
+                continue
+            n = min(len(pat), len(words))
+            best = None
+            for j in range(0, len(words) - n + 1):
+                r = difflib.SequenceMatcher(None, pat, [w for _, _, w in words[j:j + n]], autojunk=False).ratio()
+                if best is None or r > best[0]:
+                    best = (r, j)
+            r, j = best
+            if r < 0.55:
+                if report is not None:
+                    report.setdefault("warnings", []).append(
+                        f"scripture {sp.get('ref')}: words not found in take {sg['clip']} (best match {r:.0%}); card skipped")
+                continue
+            t0 = words[j][0]
+            t1 = t0 if sp.get("anchor") else words[j + n - 1][1]
+            nw = len(sp["text"].split())
+            end = t0 + float(sp["hold"]) if sp.get("hold") else max(
+                t1 + spec["after"], t0 + spec["min_secs"] + spec["per_word"] * nw * (0.5 if not sp.get("anchor") else 1.0))
+            if sp.get("anchor") and not sp.get("hold"):
+                end = t0 + 5.0
+            lo, hi = sg["in"], sg["out"]
+            if t0 < lo - 0.05 or t0 > hi - 0.5:
+                continue
+            o0 = starts[i] + (max(lo, t0 - spec["lead"]) - lo)
+            o1 = starts[i] + (min(hi - 0.15, end) - lo)
+            if o1 - o0 >= 1.2:
+                out.append((o0, o1, sp))
+    out.sort(key=lambda e: e[0])
+    for i in range(len(out) - 1):   # never two cards at once: one ends as the next begins
+        if out[i][1] > out[i + 1][0] - 0.1:
+            out[i] = (out[i][0], out[i + 1][0] - 0.1, out[i][2])
+    return out
+
+
 def render_episode(man, cfg, clips, work, outdir, font, draft, report):
     ep = man["episode_cut"]
     name = man.get("episode_name", f"E{man['episode']}F1")
@@ -1254,6 +1401,29 @@ def render_episode(man, cfg, clips, work, outdir, font, draft, report):
             f"[bgb][fgs]overlay=(W-w)/2:0,format=yuv420p[base]",
         ]
     g, last = overlay_chain("base", cards, fps, W, H)
+    # Scripture cards (Oct 19): centred in the lower part of the frame, clear of the end card
+    scards = []
+    end_lim = total - ((card.get("seconds", 4.0) + 0.3) if card.get("lines") else 0.3)
+    tw = report["episode"].get("title_window")   # never over the title card (Oct 19)
+    for j, (o0, o1, sp) in enumerate(scripture_events(man, segs, starts, clips, report)):
+        if tw and o0 < tw[1] + 0.4 and o1 > tw[0] - 0.2:
+            o0 = max(o0, tw[1] + 0.4)
+        o1 = min(o1, end_lim)
+        if o1 - o0 < 1.2:
+            continue
+        png, pw, ph = scripture_png(sp, font, H / 1080.0, SCRIPTURE["ep_size"], SCRIPTURE["ep_ref"],
+                                    SCRIPTURE["ep_maxw"], os.path.join(work, f"{name}_scripture{j}.png"))
+        scards.append((png, pw, ph, o0, o1))
+    report["episode"]["scripture"] = [[round(c[3], 2), round(c[4], 2)] for c in scards]
+    for j, (png, pw, ph, o0, o1) in enumerate(scards):
+        n = 1 + len(cards) + j
+        fd = SCRIPTURE["fade"]
+        y = int(round(H * SCRIPTURE["ep_centre_y"] - ph / 2.0))
+        y = max(0, min(H - ph, y))
+        g.append(f"[{n}:v]format=rgba,fade=t=in:st={fnum(o0)}:d={fd}:alpha=1,"
+                 f"fade=t=out:st={fnum(o1 - fd)}:d={fd}:alpha=1[sc{j}]")
+        g.append(f"[{last}][sc{j}]overlay=x=(W-w)/2:y={y}:eof_action=pass:enable='between(t,{fnum(o0)},{fnum(o1)})'[scv{j}]")
+        last = f"scv{j}"
     vf += g + [f"[{last}]fade=t=out:st={fnum(total - fade)}:d={fnum(fade)},format=yuv420p[v]"]
     script = os.path.join(work, f"{name}_16x9.filter.txt")
     open(script, "w").write(";\n".join(vf))
@@ -1261,6 +1431,9 @@ def render_episode(man, cfg, clips, work, outdir, font, draft, report):
     inputs = []
     for png, _, _, _, _ in cards:
         inputs += ["-loop", "1", "-framerate", str(fps), "-t", fnum(total + 1), "-i", png]
+    for png, _, _, o0, o1 in scards:
+        inputs += ["-loop", "1", "-framerate", str(fps), "-itsoffset", fnum(max(0.0, o0 - 0.1)),
+                   "-t", fnum(o1 - max(0.0, o0 - 0.1) + 0.3), "-i", png]
     amap = "0:a"
     portal_t = first_flash(segs, starts, clips)
     if man.get("theme") and ep.get("theme", True):
@@ -1269,7 +1442,7 @@ def render_episode(man, cfg, clips, work, outdir, font, draft, report):
         else:
             wav, report["episode"]["theme"] = mix_theme(master, man, portal_t, work, name)
             inputs += ["-i", wav]
-            amap = f"{1 + len(cards)}:a"
+            amap = f"{1 + len(cards) + len(scards)}:a"
     run(["ffmpeg", "-y", "-v", "error", "-i", master] + inputs + ["-filter_complex_script", script,
          "-map", "[v]", "-map", amap, "-r", str(fps), "-shortest", "-c:v", "libx264",
          "-preset", "veryfast" if draft else "medium", "-crf", "20" if draft else "18",
@@ -1489,9 +1662,33 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
             caps.append([round(max(0.0, a), 2), round(b2, 2), text])
         rep["captions"] = caps
 
+    if kind != "trailer" and sh.get("scripture", True):
+        # Scripture cards (Oct 19) in the top band, never over the hook or the title
+        busy = []
+        if sh.get("hook") or sh.get("part"):
+            busy.append((0.0, float(sh.get("hook_until", T["hook_secs"])) + 0.2))
+        if rep.get("title_window"):
+            busy.append((rep["title_window"][0] - 0.2, rep["title_window"][1] + 0.2))
+        placed = []
+        for j, (o0, o1, sp) in enumerate(scripture_events(man, segs, starts, clips, report)):
+            for b0, b1 in busy:
+                if o0 < b1 and o1 > b0:
+                    o0 = max(o0, b1) if o0 >= b0 - 0.5 else o0
+                    o1 = min(o1, b0) if o0 < b0 else o1
+            o1 = min(o1, (total - card_secs - 0.1) if card else total - 0.1)
+            if o1 - o0 < 1.2:
+                continue
+            png, pw, ph = scripture_png(sp, font, k, SCRIPTURE["sh_size"], SCRIPTURE["sh_ref"], SCRIPTURE["sh_maxw"],
+                                        os.path.join(work, f"{name}_scripture{j}.png"), canvas_w=W)
+            layers.append((png, hook_y - ph / 2.0, o0, o1, SCRIPTURE["fade"], 0.0))
+            placed.append([round(o0, 2), round(o1, 2)])
+        rep["scripture"] = placed
     ins = ["-i", base]
-    for p, *_ in layers:
-        ins += ["-loop", "1", "-framerate", str(fps), "-t", fnum(total + 1), "-i", p]
+    # Each text layer is fed only around its own window (Oct 18): looping every PNG for the whole
+    # video made the vertical episode (hundreds of caption layers) take ~20 min; this takes ~3.
+    for p, _y0, _s, _e, *_ in layers:
+        ins += ["-loop", "1", "-framerate", str(fps), "-itsoffset", fnum(max(0.0, _s - 0.1)),
+                "-t", fnum(_e - max(0.0, _s - 0.1) + 0.3), "-i", p]
     asrc = "0:a"
     if man.get("theme") and sh.get("theme", kind in ("episode", "trailer")):
         portal_t = first_flash(segs, starts, clips)
@@ -1508,7 +1705,7 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
                             name, rep, report)
         if cover:
             cov_idx = 1 + len(layers) + (0 if asrc == "0:a" else 1)
-            ins += ["-loop", "1", "-framerate", str(fps), "-t", fnum(total + 1), "-i", cover]
+            ins += ["-loop", "1", "-framerate", str(fps), "-t", "0.5", "-i", cover]
     g = [f"[0:v]setpts=PTS-STARTPTS" + (f",tpad=stop_mode=clone:stop_duration={hold:.3f}" if hold else "") + "[src]",
          f"[{asrc}]asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
          + (f",apad=pad_dur={hold:.3f}" if hold else "") + "[aout]"]
@@ -1532,7 +1729,7 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
         g.append(f"[{i}:v]format=rgba,fade=t=in:st={fnum(s)}:d={fnum(fd)}:alpha=1,"
                  f"fade=t=out:st={fnum(e - fd)}:d={fnum(fd)}:alpha=1[l{i}]")
         yexpr = (f"'{y0:.1f}+{rise:.1f}*pow(max(0\\,1-(t-{fnum(s)})/0.6)\\,2)':eval=frame" if rise else f"{y0:.1f}")
-        g.append(f"[c{i - 1}][l{i}]overlay=x=0:y={yexpr}:shortest=1:enable='between(t,{fnum(s)},{fnum(e)})'[c{i}]")
+        g.append(f"[c{i - 1}][l{i}]overlay=x=0:y={yexpr}:eof_action=pass:enable='between(t,{fnum(s)},{fnum(e)})'[c{i}]")
     vout = f"c{len(layers)}"
     fade = ep.get("fade_out", 0.6) if kind == "episode" else 0.0
     if fade:
@@ -1540,7 +1737,7 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
         vout = "vend"
     if cover:   # frame 0 only: a viewer never sees it, the profile grid does
         g.append(f"[{cov_idx}:v]format=rgba,setsar=1[cov]")
-        g.append(f"[{vout}][cov]overlay=0:0:shortest=1:enable='eq(n,0)'[vcov]")
+        g.append(f"[{vout}][cov]overlay=0:0:eof_action=pass:enable='eq(n,0)'[vcov]")
         vout = "vcov"
     script = os.path.join(work, f"{name}.filter.txt")
     open(script, "w").write(";\n".join(g))
