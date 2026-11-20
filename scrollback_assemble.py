@@ -71,6 +71,21 @@ What it does, in order:
   9. Writes a shot log (JSON + Markdown) and a contact sheet per output, so the
      result can be checked frame by frame before anything is uploaded.
 
+Scripture on screen (Brian, Nov 20, the verse text style): verses are drawn word by word,
+as they are spoken, in Outfit, by scrollback_verses.py on the finished files. This script
+keeps each manifest "scripture" entry only as an invisible layer ("verse_style": "kinetic",
+the default; "cards" brings back the retired Oct 19 cards). Run scrollback_verses.py on
+the episode, the vertical episode and every Short after this script (README).
+
+Manifest keys added Nov 8-20 (from the production sandboxes): "hard_in" (clip ids that
+always hard-cut in), "caption_min" (seconds a short caption holds), "title_y" and an end
+card's "y" (per-card height on the 16:9 episode), a Short's "card_zone" ("top" puts the
+end card in the top band), "cta_avoid" (windows where LIKE · COMMENT · SUBSCRIBE must not
+go, e.g. verses drawn in post), a hook may force its line break with "\\n", and a
+scripture entry's "qopen"/"qclose" (false for a verse split across two shots). Captions
+never merge across a change of speaker; a long verse read without a pause is split at
+its commas; the vertical title kicker drops words until it fits the frame.
+
 Everything is driven by the manifest. See example_manifest.json for a worked example.
 """
 
@@ -440,11 +455,17 @@ def plan_segment(clip, want_in, want_out, cfg, portal=False):
     return {"clip": clip["id"], "in": t_in, "out": t_out, "portal": portal, "notes": notes}
 
 
+HARD_IN = set()
+VERSE_STYLE = "kinetic"   # manifest "verse_style": "kinetic" (default, Nov 20) or "cards" (the retired Oct 19 cards)
+
+
 def choose_transition(a_seg, b_seg, clips, D, fps):
     """dissolve only when nobody is speaking across the join and it is not a portal."""
     frame = 1.0 / fps
     if a_seg["portal"]:
         return frame, "hard cut (portal)"
+    if b_seg["clip"] in HARD_IN:
+        return frame, "hard cut (manifest hard_in)"
     A, B = clips[a_seg["clip"]], clips[b_seg["clip"]]
     if speech_overlaps(a_seg["out"] - D, a_seg["out"], A["speech"]):
         return frame, "hard cut (speech at the end of the outgoing shot)"
@@ -593,7 +614,7 @@ LOWER_THIRD = {   # the production bible's title-card spec, at 1080 lines; every
     "title_size": 46, "title_tracking": 0.20, "cream": (246, 240, 230, 240), "line_gap": 6,
     "left": 0.06, "centre_y": 0.80,
     "shadow_alpha": 110, "shadow_blur": 10, "shadow_dy": 4,
-    "fade_in": 0.5, "rise_px": 14, "rise_time": 0.6, "fade_out": 0.4,
+    "fade_in": 0.25, "rise_px": 14, "rise_time": 0.3, "fade_out": 0.2,
 }
 
 
@@ -639,9 +660,11 @@ def lower_third_png(kicker, lines, font, H, out_path, spec=LOWER_THIRD):
 def overlay_chain(base_label, cards, fps, W, H, spec=LOWER_THIRD):
     """Filter text that lays lower-third PNGs (inputs 1..n) over base_label with fade and rise."""
     g, cur = [], base_label
-    for n, (png, pad, ph, t0, t1) in enumerate(cards, start=1):
+    for n, card in enumerate(cards, start=1):
+        png, pad, ph, t0, t1 = card[:5]
+        cy = card[5] if len(card) > 5 and card[5] is not None else spec["centre_y"]   # v2: per-card height
         x = int(round(W * spec["left"])) - pad
-        y = int(round(H * spec["centre_y"] - ph / 2))
+        y = int(round(H * cy - ph / 2))
         rise, rt = spec["rise_px"] * H / 1080.0, spec["rise_time"]
         g.append(f"[{n}:v]format=rgba,fade=t=in:st={fnum(t0)}:d={spec['fade_in']}:alpha=1,"
                  f"fade=t=out:st={fnum(t1 - spec['fade_out'])}:d={spec['fade_out']}:alpha=1[lt{n}]")
@@ -1125,7 +1148,9 @@ def mix_theme(src, man, flash_t, work, name):
 # ----------------------------------------------------------------------------
 
 def norm_tok(w):
-    return re.sub(r"[^a-z0-9']", "", w.lower())
+    # Nov 20 (Episode 15): a quoted word ("'His", "Olives.'") must still match whisper's "His"/"Olives",
+    # so quote marks at either end are dropped; apostrophes inside a word ("what's") are kept.
+    return re.sub(r"[^a-z0-9']", "", w.lower().replace("\u2019", "'")).strip("'")
 
 
 def timed_script_words(clip, fixes):
@@ -1139,6 +1164,8 @@ def timed_script_words(clip, fixes):
     if not script:
         return [(s, e, fixes.get(norm_tok(w), w)) for s, e, w in words]
     sw = []
+    TURN = "\u2060"   # v3: marks the first word of each later script line, so captions never merge across speakers
+    script = (" " + TURN).join(l.strip() for l in (clip.get("lines") or []) if l.strip())
     for t in script.replace(" - ", " — ").split():
         if sw and not norm_tok(t):
             sw[-1] += " " + t      # a lone dash rides on the word before it
@@ -1282,6 +1309,30 @@ def caption_chunks(words, fit, maxw, max_gap=0.8):
         return " ".join(x[2] for x in g)
 
     def split(g):
+        if len(g) > 14:   # long verse read without a pause: split at commas, else fill greedily
+            subs, cur = [], []
+            for x in g:
+                cur.append(x)
+                if re.search(r"[,—]$", x[2]) and len(cur) >= 3:
+                    subs.append(cur); cur = []
+            if cur:
+                if subs and len(cur) < 3:
+                    subs[-1].extend(cur)
+                else:
+                    subs.append(cur)
+            if len(subs) > 1:
+                return [q for sg in subs for q in split(sg)]
+            parts, cur = [], []
+            for x in g:
+                if cur and fit(txt(cur + [x])) > maxw:
+                    parts.append(cur); cur = [x]
+                else:
+                    cur.append(x)
+            if cur:
+                parts.append(cur)
+            if len(parts) > 1 and len(parts[-1]) == 1 and len(parts[-2]) > 2:
+                parts[-1].insert(0, parts[-2].pop())
+            return parts
         for n in range(1, len(g) + 1):
             best = None
             for cuts in combinations(range(1, len(g)), n - 1):
@@ -1318,10 +1369,10 @@ def caption_chunks(words, fit, maxw, max_gap=0.8):
 
 SCRIPTURE = {
     "white": (255, 255, 255, 255), "gold": (232, 182, 92, 255), "box": None, "outline": 3,   # no panel (Brian, Oct 19): outline + shadow
-    "ep_size": 44, "ep_ref": 22, "ep_maxw": 1240, "ep_centre_y": 0.80,     # px at 1080 lines
-    "sh_size": 54, "sh_ref": 30, "sh_maxw": 900,                          # px at 1920 lines
+    "ep_size": 36, "ep_ref": 18, "ep_maxw": 1150, "ep_centre_y": 0.82,     # px at 1080 lines
+    "sh_size": 46, "sh_ref": 26, "sh_maxw": 920,                          # px at 1920 lines
     "ref_tracking": 0.30, "pad": 34, "line_gap": 10, "ref_gap": 16,
-    "lead": 0.25, "after": 1.0, "per_word": 0.30, "min_secs": 2.2, "fade": 0.35,
+    "lead": 0.15, "after": 0.6, "per_word": 0.25, "min_secs": 1.4, "fade": 0.15,
 }
 
 
@@ -1349,8 +1400,10 @@ def scripture_png(sp, font, k, size, ref_size, maxw, path, canvas_w=None, spec=S
     tokens = sp["text"].split()
     marks = _gold_marks(tokens, sp.get("gold"))
     tokens = list(tokens)
-    tokens[0] = "“" + tokens[0]
-    tokens[-1] = tokens[-1] + "”"
+    if sp.get("qopen", True):
+        tokens[0] = "“" + tokens[0]
+    if sp.get("qclose", True):
+        tokens[-1] = tokens[-1] + "”"
     sw = f.getlength(" ")
     lines, cur, cw = [], [], 0.0
     for t, m in zip(tokens, marks):
@@ -1401,6 +1454,11 @@ def scripture_png(sp, font, k, size, ref_size, maxw, path, canvas_w=None, spec=S
     out = panel
     out.alpha_composite(sh, (0, int(round(3 * k))))
     out.alpha_composite(fg)
+    if VERSE_STYLE == "kinetic" or os.environ.get('SB_INVISIBLE_CARDS'):
+        # Nov 20 (Brian): verses are drawn word by word in post by scrollback_verses.py; the old
+        # card stays in the render as an invisible layer, so its timing still steers the other text
+        from PIL import Image as _I
+        out = _I.new('RGBA', out.size, (0, 0, 0, 0))
     out.save(path)
     return path, W, H
 
@@ -1442,12 +1500,12 @@ def scripture_events(man, segs, starts, clips, report=None, spec=SCRIPTURE):
                 continue
             o0 = starts[i] + (max(lo, t0 - spec["lead"]) - lo)
             o1 = starts[i] + (min(hi - 0.15, end) - lo)
-            if o1 - o0 >= 1.2:
+            if o1 - o0 >= 0.8:
                 out.append((o0, o1, sp))
     out.sort(key=lambda e: e[0])
     for i in range(len(out) - 1):   # never two cards at once: one ends as the next begins
-        if out[i][1] > out[i + 1][0] - 0.1:
-            out[i] = (out[i][0], out[i + 1][0] - 0.1, out[i][2])
+        if out[i][1] > out[i + 1][0] - 0.05:
+            out[i] = (out[i][0], out[i + 1][0] - 0.05, out[i][2])
     return out
 
 
@@ -1490,7 +1548,7 @@ def render_episode(man, cfg, clips, work, outdir, font, draft, report):
         kicker = ep.get("kicker", "SCROLL BACK  \u00b7  " + ep_label(man).upper())
         png = lower_third_png(kicker, [l.upper() for l in title.split("\n")], font, H,
                               os.path.join(work, f"{name}_title.png"))
-        cards.append(png + (t0, t1))
+        cards.append(png + (t0, t1, ep.get("title_y")))
         report["episode"]["title_window"] = [round(t0, 2), round(t1, 2)]
     elif title:
         report.setdefault("warnings", []).append("no portal flash found, so the title was not placed")
@@ -1505,7 +1563,7 @@ def render_episode(man, cfg, clips, work, outdir, font, draft, report):
         secs = card.get("seconds", 4.0)
         kick, *rest = card["lines"] if len(card["lines"]) > 1 else ["", card["lines"][0]]
         png = lower_third_png(kick.upper(), [r.upper() for r in rest], font, H, os.path.join(work, f"{name}_endcard.png"))
-        cards.append(png + (max(0.0, total - secs), total - 0.05))
+        cards.append(png + (max(0.0, total - secs), total - 0.05, card.get("y")))
     fade = ep.get("fade_out", 0.6)
     if size[0] >= size[1]:
         # widescreen footage (Episode 2 on): true 16:9, no bars
@@ -1529,7 +1587,7 @@ def render_episode(man, cfg, clips, work, outdir, font, draft, report):
         if tw and o0 < tw[1] + 0.4 and o1 > tw[0] - 0.2:
             o0 = max(o0, tw[1] + 0.4)
         o1 = min(o1, end_lim)
-        if o1 - o0 < 1.2:
+        if o1 - o0 < 0.8:
             continue
         png, pw, ph = scripture_png(sp, font, H / 1080.0, SCRIPTURE["ep_size"], SCRIPTURE["ep_ref"],
                                     SCRIPTURE["ep_maxw"], os.path.join(work, f"{name}_scripture{j}.png"))
@@ -1549,7 +1607,8 @@ def render_episode(man, cfg, clips, work, outdir, font, draft, report):
     open(script, "w").write(";\n".join(vf))
     stage = os.path.join(work, f"{name}_stage.mkv")
     inputs = []
-    for png, _, _, _, _ in cards:
+    for c in cards:
+        png = c[0]
         inputs += ["-loop", "1", "-framerate", str(fps), "-t", fnum(total + 1), "-i", png]
     for png, _, _, o0, o1 in scards:
         inputs += ["-loop", "1", "-framerate", str(fps), "-itsoffset", fnum(max(0.0, o0 - 0.1)),
@@ -1654,6 +1713,8 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
     else:
         zones = {"top": H * 0.17, "middle": H * 0.47, "bottom": H * 0.78}
         hook_y, card_y, cap_y = H * 0.16, H * 0.47, H * 0.74
+    if sh.get("card_zone") in zones:   # v2 (Brian, Nov 17): the vertical episode's end card in the top band
+        card_y = zones[sh["card_zone"]]
     # Text: the production bible's Shorts text spec (SHORT_TEXT). Every layer is a PNG drawn in
     # Montserrat ExtraBold with the soft shadow; trailer beats and end cards use the title-card
     # block (gold kicker, gold rule, cream letter-spaced caps); captions add a thin dark outline.
@@ -1729,13 +1790,13 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
                     report.setdefault("warnings", []).append(f"{name}: hook is {len(hook.split())} words; the spec is 1-3")
                 fh = ImageFont.truetype(font, int(round(T["hook_size"] * k)))
                 rows += [("t", ln, T["hook_size"], T["hook_tracking"], T["cream"], 10)
-                         for ln in wrap_px(fh, hook, T["hook_maxw"] * k, T["hook_tracking"])]
+                         for ln in (hook.split("\n") if "\n" in hook else wrap_px(fh, hook, T["hook_maxw"] * k, T["hook_tracking"]))]
             add(rows, hook_y, 0.0, sh.get("hook_until", T["hook_secs"]), rise=T["card_rise_px"])
         card_s = total - card_secs
         # Nov 8 (Brian): a last line still being spoken when the end card comes in kept no caption
         # ("Luke says they all grumbled"). Then the card goes to the top band and the captions run on.
         late = bool(card) and kind != "episode" and bool(cap_words) and cap_words[-1][1] > card_s + 0.05
-        cap_lim = (total - 0.05) if late else card_s - 0.05
+        cap_lim = (total - 0.05) if (late or card_y != cap_y) else card_s - 0.05   # v2: card in another band, captions may run on
         if late:
             card_y = hook_y
             rep["end_card_top"] = True
@@ -1756,6 +1817,13 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
                 # in the 1080-wide Shorts frame "SCROLL BACK · SEASON n · EPISODE m" is too wide; drop the series name there
                 kicker = ep.get("kicker", ep_label(man).upper() if man.get("season") and man.get("season_episode")
                                 else f"SCROLL BACK  ·  EPISODE {man['episode']}")
+                # Nov 20 (Episode 15): the 16:9 kicker "SCROLL BACK · SEASON 2 · EPISODE 5 · THE RETURN" ran off both
+                # edges of the vertical; drop the series name, then the arc name, until it fits the caption width
+                fk = ImageFont.truetype(font, int(round(T["card_kicker_size"] * k)))
+                parts = [x.strip() for x in kicker.split("  ·  ")]
+                while len(parts) > 1 and text_w(fk, "  ·  ".join(parts).upper(), T["kicker_tracking"]) > T["caption_maxw"] * k:
+                    parts = parts[1:] if parts[0].upper() == "SCROLL BACK" else parts[:-1]
+                kicker = "  ·  ".join(parts)
                 add([st_kicker(kicker, T["card_kicker_size"]), st_rule()] + [st_title(ln, tsz) for ln in lines],
                     hook_y, t0, t1, fade=0.3, rise=T["card_rise_px"])
                 rep["title_window"] = [round(t0, 2), round(t1, 2)]
@@ -1779,21 +1847,24 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
         # 0.2s on screen, so the captions skipped script words. Now it joins the next chunk when
         # the two fit on one line; otherwise it gets 0.25s and the next chunk starts just after.
         chunks = [list(c) for c in chunks]
+        cap_min = float(man.get("caption_min", 0.25))   # v2 (Brian, Nov 17): short captions hold at least this long
         j = 0
         while j < len(chunks) - 1:
             a, b, text = chunks[j]
             na, nb, ntext = chunks[j + 1]
-            if min(b + 0.12, na - 0.03) - a < 0.25 and fc.getlength(text + " " + ntext) <= T["caption_maxw"] * k:
+            dur = min(b + 0.12, na - 0.03) - a
+            if (dur < 0.25 or (dur < cap_min and na - b < 0.6 and not ntext.startswith("\u2060"))) and fc.getlength(text + " " + ntext) <= T["caption_maxw"] * k:
                 chunks[j] = [a, nb, text + " " + ntext]
                 del chunks[j + 1]
                 continue
             j += 1
+        chunks = [[a, b, text.replace("\u2060", "")] for a, b, text in chunks]
         caps = []
         for j, (a, b, text) in enumerate(chunks):
             if j and a < caps[-1][1] + 0.03:
                 a = caps[-1][1] + 0.03  # the chunk before was stretched to stay readable
             b2 = min(b + 0.12, chunks[j + 1][0] - 0.03 if j + 1 < len(chunks) else 1e9, cap_lim)
-            b2 = max(b2, min(a + 0.25, cap_lim))
+            b2 = max(b2, min(a + cap_min, cap_lim))
             if b2 - a < 0.05:
                 continue  # only possible right against the end card
             toks = text.split()
@@ -1824,7 +1895,7 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
                     o0 = max(o0, b1) if o0 >= b0 - 0.5 else o0
                     o1 = min(o1, b0) if o0 < b0 else o1
             o1 = min(o1, (total - card_secs - 0.1) if card else total - 0.1)
-            if o1 - o0 < 1.2:
+            if o1 - o0 < 0.8:
                 continue
             png, pw, ph = scripture_png(sp, font, k, SCRIPTURE["sh_size"], SCRIPTURE["sh_ref"], SCRIPTURE["sh_maxw"],
                                         os.path.join(work, f"{name}_scripture{j}.png"), canvas_w=W)
@@ -1835,6 +1906,7 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
         # Nov 3 clean layout: a gold LIKE · COMMENT · SUBSCRIBE line pops up once mid-Short in the top band,
         # in a gap with no hook, title or Scripture card, ending before the end card
         busy = [(0.0, float(sh.get("hook_until", T["hook_secs"])) + 0.2)] + [(a - 0.2, b + 0.2) for a, b in (rep.get("scripture") or [])]
+        busy += [(a - 0.2, b + 0.2) for a, b in (sh.get("cta_avoid") or [])]   # Nov 20: verses drawn in post (kinetic) share the top band
         end_lim = (total - card_secs - 0.1) if card else total - 0.1
         t, dur, placed_cta = max(3.2, 0.45 * total), 2.8, None
         while t + dur <= end_lim:
@@ -1843,7 +1915,7 @@ def render_short(sh, man, cfg, clips, work, outdir, font, draft, report):
                 break
             t += 0.25
         if placed_cta is not None:
-            add([st_kicker("LIKE  \u00b7  COMMENT  \u00b7  SUBSCRIBE", 36)], hook_y, placed_cta, placed_cta + dur, fade=0.3)
+            add([st_kicker("LIKE  \u00b7  COMMENT  \u00b7  SUBSCRIBE", 27)], hook_y, placed_cta, placed_cta + dur, fade=0.3)
             rep["cta"] = [round(placed_cta, 2), round(placed_cta + dur, 2)]
     ins = ["-i", base]
     # Each text layer is fed only around its own window (Oct 18): looping every PNG for the whole
@@ -2005,6 +2077,9 @@ def main():
     args = ap.parse_args()
 
     man = json.load(open(args.manifest))
+    HARD_IN.update(man.get("hard_in", []))
+    global VERSE_STYLE
+    VERSE_STYLE = man.get("verse_style", "kinetic")
     cfg = dict(DEFAULTS)
     cfg.update({k: v for k, v in man.items() if k in DEFAULTS})
     man["_analyze"] = args.analyze
